@@ -1,0 +1,16 @@
+放私有库（自己写的、只给本工程用的库）的目录。
+
+每个库一个子目录，例如：
+
+  lib/
+  └── MySensor/
+      ├── MySensor.h
+      └── MySensor.cpp
+
+这样在 src/main.cpp 里就能直接 #include <MySensor.h>，
+PlatformIO 会自动发现并编译它，不用改 platformio.ini。
+
+从网上装第三方库不要放这里，用 platformio.ini 的 lib_deps 声明，例如：
+
+  lib_deps =
+      knolleary/PubSubClient@^2.8

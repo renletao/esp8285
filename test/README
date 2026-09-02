@@ -1,0 +1,6 @@
+放单元测试的目录，用 `pio test` 运行。
+
+PlatformIO 内置 Unity 测试框架。测试会被编译成独立固件烧到板子上跑，
+结果通过串口回传。
+
+文档：https://docs.platformio.org/page/plus/unit-testing.html
