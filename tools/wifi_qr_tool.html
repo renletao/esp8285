@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP8285 配网码生成器</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #6b7280;
+    --line: #d9dce1;
+    --bg: #f4f5f7;
+    --accent: #1f6feb;
+    --warn: #92400e;
+    --warn-bg: #fef3c7;
+    --err: #991b1b;
+    --err-bg: #fee2e2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 48px;
+    font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 21px; margin: 0 0 6px; letter-spacing: .01em; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    background: #e7e9ed; padding: 1px 5px; border-radius: 3px; font-size: .92em;
+  }
+  .card {
+    background: #fff; border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px; margin-bottom: 16px;
+  }
+  .field { margin-bottom: 14px; }
+  .field:last-child { margin-bottom: 0; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  .hint { font-weight: 400; color: var(--muted); }
+  input, select {
+    width: 100%; padding: 9px 11px; font-size: 15px; font-family: inherit;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: inherit;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  .msg { font-size: 13px; padding: 9px 12px; border-radius: 6px; margin-bottom: 8px; }
+  .msg.err { background: var(--err-bg); color: var(--err); }
+  .msg.warn { background: var(--warn-bg); color: var(--warn); }
+  .out { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  #cv { border: 1px solid var(--line); border-radius: 6px; background: #fff; display: block; }
+  .meta { flex: 1; min-width: 220px; }
+  .payload {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 15px; word-break: break-all; background: #f0f1f4;
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;
+  }
+  .spec { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: inherit;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .notes { font-size: 12.5px; color: var(--muted); }
+  .notes h2 { font-size: 13px; color: var(--ink); margin: 0 0 8px; }
+  .notes li { margin-bottom: 5px; }
+  .notes ul { margin: 0; padding-left: 20px; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .card:not(.result), .sub, .notes, .btns, h1 { display: none; }
+    .result { border: 0; padding: 0; }
+    .spec { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>ESP8285 配网码生成器</h1>
+  <p class="sub">完全离线运行，密码不会发送到任何服务器。生成的码内容格式为 <code>SSID+密码+沿模式</code>，供物料盒扫码终端配网使用。</p>
+
+  <div class="card">
+    <div class="field">
+      <label for="ssid">WiFi 名称 SSID</label>
+      <input id="ssid" value="rlt" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="pass">WiFi 密码</label>
+      <input id="pass" value="12345678" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="mode">GPIO5 中断沿 <span class="hint">不确定就保持默认</span></label>
+      <select id="mode">
+        <option value="0">0 — 下降沿（默认）</option>
+        <option value="1">1 — 上升沿</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="msgs"></div>
+  <div class="card result">
+    <div class="out">
+      <canvas id="cv" width="300" height="300"></canvas>
+      <div class="meta">
+        <div class="payload" id="payload"></div>
+        <div class="spec" id="spec"></div>
+        <div class="btns">
+          <button id="dl-png">下载 PNG</button>
+          <button id="dl-svg">下载 SVG</button>
+          <button id="do-print">打印</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card notes">
+    <h2>使用要点</h2>
+    <ul>
+      <li>按住终端上的 GPIO14 按钮进入配网，扫码头亮起后把这张码怼上去即可。</li>
+      <li>密码里不能含加号，固件按前两个加号切分字段，含加号会切错。</li>
+      <li>SSID 上限 32 字节、密码上限 64 字节，超出会被 EEPROM 静默截断。</li>
+      <li>只支持 2.4G 的 WPA/WPA2 个人版，不支持企业认证网络。</li>
+      <li>这张码在终端正常运行时被扫到，会被当成条码上报给后台，WiFi 密码会进扫码记录表。用完不要留在现场。</li>
+    </ul>
+  </div>
+</main>
+
+<script id="qr-encoder">
+"use strict";
+
+const EC_ORDER = { L: 0, M: 1, Q: 2, H: 3 };
+const EC_FORMAT_BITS = { L: 1, M: 0, Q: 3, H: 2 };
+
+// 每项为 [每块纠错码字数, [块数, 每块数据码字数], ...]，索引 = 版本-1，再按 L/M/Q/H
+const RS_BLOCKS = [
+  [[7, [1, 19]], [10, [1, 16]], [13, [1, 13]], [17, [1, 9]]],
+  [[10, [1, 34]], [16, [1, 28]], [22, [1, 22]], [28, [1, 16]]],
+  [[15, [1, 55]], [26, [1, 44]], [18, [2, 17]], [22, [2, 13]]],
+  [[20, [1, 80]], [18, [2, 32]], [26, [2, 24]], [16, [4, 9]]],
+  [[26, [1, 108]], [24, [2, 43]], [18, [2, 15], [2, 16]], [22, [2, 11], [2, 12]]],
+  [[18, [2, 68]], [16, [4, 27]], [24, [4, 19]], [28, [4, 15]]],
+  [[20, [2, 78]], [18, [4, 31]], [18, [2, 14], [4, 15]], [26, [4, 13], [1, 14]]],
+  [[24, [2, 97]], [22, [2, 38], [2, 39]], [22, [4, 18], [2, 19]], [26, [4, 14], [2, 15]]],
+  [[30, [2, 116]], [22, [3, 36], [2, 37]], [20, [4, 16], [4, 17]], [24, [4, 12], [4, 13]]],
+  [[18, [2, 68], [2, 69]], [26, [4, 43], [1, 44]], [24, [6, 19], [2, 20]], [28, [6, 15], [2, 16]]],
+];
+
+const TOTAL_CODEWORDS = [26, 44, 70, 100, 134, 172, 196, 242, 292, 346];
+
+const ALIGN_CENTERS = [
+  [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34],
+  [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50],
+];
+const GF_EXP = new Uint8Array(512);
+const GF_LOG = new Uint8Array(256);
+(function initGF() {
+  let x = 1;
+  for (let i = 0; i < 255; i++) {
+    GF_EXP[i] = x;
+    GF_LOG[x] = i;
+    x <<= 1;
+    if (x & 0x100) x ^= 0x11d;
+  }
+  for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
+})();
+
+function gfMul(a, b) {
+  if (a === 0 || b === 0) return 0;
+  return GF_EXP[GF_LOG[a] + GF_LOG[b]];
+}
+
+function rsGenerator(degree) {
+  let poly = [1];
+  for (let i = 0; i < degree; i++) {
+    const next = new Array(poly.length + 1).fill(0);
+    for (let j = 0; j < poly.length; j++) {
+      next[j] ^= poly[j];
+      next[j + 1] ^= gfMul(poly[j], GF_EXP[i]);
+    }
+    poly = next;
+  }
+  return poly;
+}
+
+function rsRemainder(data, ecLen) {
+  const gen = rsGenerator(ecLen);
+  const buf = new Uint8Array(data.length + ecLen);
+  buf.set(data);
+  for (let i = 0; i < data.length; i++) {
+    const factor = buf[i];
+    if (factor === 0) continue;
+    for (let j = 0; j < gen.length; j++) buf[i + j] ^= gfMul(gen[j], factor);
+  }
+  return buf.subarray(data.length);
+}
+
+function blockLayout(version, ecLevel) {
+  const [ecPerBlock, ...groups] = RS_BLOCKS[version - 1][EC_ORDER[ecLevel]];
+  let dataCount = 0;
+  for (const [count, size] of groups) dataCount += count * size;
+  return { ecPerBlock, groups, dataCount };
+}
+
+function chooseVersion(byteLen, ecLevel) {
+  for (let v = 1; v <= 10; v++) {
+    const { dataCount } = blockLayout(v, ecLevel);
+    const headerBits = 4 + (v < 10 ? 8 : 16);
+    if (dataCount * 8 >= headerBits + byteLen * 8) return v;
+  }
+  return null;
+}
+function buildCodewords(bytes, version, ecLevel) {
+  const { ecPerBlock, groups, dataCount } = blockLayout(version, ecLevel);
+  const bits = [];
+  const put = (value, len) => {
+    for (let i = len - 1; i >= 0; i--) bits.push((value >>> i) & 1);
+  };
+
+  put(4, 4);
+  put(bytes.length, version < 10 ? 8 : 16);
+  for (const b of bytes) put(b, 8);
+
+  const capacity = dataCount * 8;
+  put(0, Math.min(4, capacity - bits.length));
+  while (bits.length % 8 !== 0) bits.push(0);
+
+  const dataBytes = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    let v = 0;
+    for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j];
+    dataBytes.push(v);
+  }
+  const PAD = [0xec, 0x11];
+  for (let i = 0; dataBytes.length < dataCount; i++) dataBytes.push(PAD[i % 2]);
+
+  const blocks = [];
+  let offset = 0;
+  for (const [count, size] of groups) {
+    for (let i = 0; i < count; i++) {
+      const chunk = Uint8Array.from(dataBytes.slice(offset, offset + size));
+      offset += size;
+      blocks.push({ data: chunk, ec: rsRemainder(chunk, ecPerBlock) });
+    }
+  }
+
+  const out = [];
+  const maxData = Math.max(...blocks.map((b) => b.data.length));
+  for (let i = 0; i < maxData; i++) {
+    for (const b of blocks) if (i < b.data.length) out.push(b.data[i]);
+  }
+  for (let i = 0; i < ecPerBlock; i++) {
+    for (const b of blocks) out.push(b.ec[i]);
+  }
+  return out;
+}
+const MASK_FNS = [
+  (r, c) => (r + c) % 2 === 0,
+  (r, c) => r % 2 === 0,
+  (r, c) => c % 3 === 0,
+  (r, c) => (r + c) % 3 === 0,
+  (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+  (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0,
+  (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0,
+  (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0,
+];
+
+function formatBits(ecLevel, mask) {
+  const data = (EC_FORMAT_BITS[ecLevel] << 3) | mask;
+  let rem = data;
+  for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0b10100110111);
+  return ((data << 10) | rem) ^ 0b101010000010010;
+}
+
+function versionBits(version) {
+  let rem = version;
+  for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0b1111100100101);
+  return (version << 12) | rem;
+}
+
+function buildMatrix(version, ecLevel, codewords, mask) {
+  const size = version * 4 + 17;
+  const m = Array.from({ length: size }, () => new Uint8Array(size));
+  const fixed = Array.from({ length: size }, () => new Uint8Array(size));
+  const set = (r, c, dark) => { m[r][c] = dark ? 1 : 0; fixed[r][c] = 1; };
+
+  for (const [br, bc] of [[0, 0], [0, size - 7], [size - 7, 0]]) {
+    for (let r = -1; r <= 7; r++) {
+      for (let c = -1; c <= 7; c++) {
+        const rr = br + r, cc = bc + c;
+        if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+        const ring = (r === 0 || r === 6) && c >= 0 && c <= 6;
+        const side = (c === 0 || c === 6) && r >= 0 && r <= 6;
+        const core = r >= 2 && r <= 4 && c >= 2 && c <= 4;
+        set(rr, cc, ring || side || core);
+      }
+    }
+  }
+
+  for (let i = 8; i < size - 8; i++) {
+    set(6, i, i % 2 === 0);
+    set(i, 6, i % 2 === 0);
+  }
+
+  const centers = ALIGN_CENTERS[version - 1];
+  const last = centers.length - 1;
+  for (let i = 0; i <= last; i++) {
+    for (let j = 0; j <= last; j++) {
+      // 三个定位图形所在的角不画校正图形，其余都要画（含落在定时行列上的）
+      if ((i === 0 && j === 0) || (i === 0 && j === last) || (i === last && j === 0)) continue;
+      const cr = centers[i], cc = centers[j];
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          set(cr + dr, cc + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+        }
+      }
+    }
+  }
+  set(size - 8, 8, true);
+
+  for (let i = 0; i <= 8; i++) {
+    if (!fixed[8][i]) set(8, i, false);
+    if (!fixed[i][8]) set(i, 8, false);
+  }
+  for (let i = 0; i < 8; i++) {
+    if (!fixed[8][size - 1 - i]) set(8, size - 1 - i, false);
+    if (!fixed[size - 1 - i][8]) set(size - 1 - i, 8, false);
+  }
+  if (version >= 7) {
+    for (let i = 0; i < 6; i++) {
+      for (let j = 0; j < 3; j++) {
+        set(size - 11 + j, i, false);
+        set(i, size - 11 + j, false);
+      }
+    }
+  }
+
+  let bit = 0;
+  const totalBits = codewords.length * 8;
+  let upward = true;
+  for (let col = size - 1; col > 0; col -= 2) {
+    if (col === 6) col = 5;
+    for (let i = 0; i < size; i++) {
+      const row = upward ? size - 1 - i : i;
+      for (let k = 0; k < 2; k++) {
+        const c = col - k;
+        if (fixed[row][c]) continue;
+        let dark = 0;
+        if (bit < totalBits) {
+          dark = (codewords[bit >> 3] >>> (7 - (bit & 7))) & 1;
+          bit++;
+        }
+        m[row][c] = dark;
+      }
+    }
+    upward = !upward;
+  }
+
+  const maskFn = MASK_FNS[mask];
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (!fixed[r][c] && maskFn(r, c)) m[r][c] ^= 1;
+    }
+  }
+
+  const fb = formatBits(ecLevel, mask);
+  for (let i = 0; i <= 5; i++) m[i][8] = (fb >>> i) & 1;
+  m[7][8] = (fb >>> 6) & 1;
+  m[8][8] = (fb >>> 7) & 1;
+  m[8][7] = (fb >>> 8) & 1;
+  for (let i = 9; i <= 14; i++) m[8][14 - i] = (fb >>> i) & 1;
+  for (let i = 0; i <= 7; i++) m[8][size - 1 - i] = (fb >>> i) & 1;
+  for (let i = 8; i <= 14; i++) m[size - 15 + i][8] = (fb >>> i) & 1;
+
+  if (version >= 7) {
+    const vb = versionBits(version);
+    for (let i = 0; i < 18; i++) {
+      const b = (vb >>> i) & 1;
+      m[size - 11 + (i % 3)][Math.floor(i / 3)] = b;
+      m[Math.floor(i / 3)][size - 11 + (i % 3)] = b;
+    }
+  }
+  return m;
+}
+const RUN_PATTERNS = [
+  [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
+  [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1],
+];
+
+function penalty(m) {
+  const size = m.length;
+  let score = 0;
+
+  const scanLine = (get) => {
+    let run = 1;
+    for (let j = 1; j < size; j++) {
+      if (get(j) === get(j - 1)) {
+        run++;
+      } else {
+        if (run >= 5) score += run - 2;
+        run = 1;
+      }
+    }
+    if (run >= 5) score += run - 2;
+  };
+  for (let i = 0; i < size; i++) {
+    scanLine((j) => m[i][j]);
+    scanLine((j) => m[j][i]);
+  }
+
+  for (let r = 0; r < size - 1; r++) {
+    for (let c = 0; c < size - 1; c++) {
+      const v = m[r][c];
+      if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) score += 3;
+    }
+  }
+
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j + 11 <= size; j++) {
+      for (const p of RUN_PATTERNS) {
+        let rowHit = true, colHit = true;
+        for (let k = 0; k < 11; k++) {
+          if (m[i][j + k] !== p[k]) rowHit = false;
+          if (m[j + k][i] !== p[k]) colHit = false;
+        }
+        if (rowHit) score += 40;
+        if (colHit) score += 40;
+      }
+    }
+  }
+
+  let dark = 0;
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) dark += m[r][c];
+  const pct = (dark * 100) / (size * size);
+  score += Math.floor(Math.abs(pct - 50) / 5) * 10;
+  return score;
+}
+
+function encodeQR(text, ecLevel, forceMask) {
+  const bytes = Array.from(new TextEncoder().encode(text));
+  const version = chooseVersion(bytes.length, ecLevel);
+  if (version === null) return null;
+  const codewords = buildCodewords(bytes, version, ecLevel);
+  if (codewords.length !== TOTAL_CODEWORDS[version - 1]) {
+    throw new Error("码字数与版本不符，编码逻辑有误");
+  }
+  if (forceMask !== undefined && forceMask !== null) {
+    return { version, ecLevel, mask: forceMask, matrix: buildMatrix(version, ecLevel, codewords, forceMask) };
+  }
+  let best = null;
+  for (let mask = 0; mask < 8; mask++) {
+    const matrix = buildMatrix(version, ecLevel, codewords, mask);
+    const score = penalty(matrix);
+    if (best === null || score < best.score) best = { version, ecLevel, mask, matrix, score };
+  }
+  return best;
+}
+
+if (typeof module !== "undefined" && module.exports) module.exports = { encodeQR };
+</script>
+
+<script>
+"use strict";
+
+const MAX_SSID_BYTES = 32;
+const MAX_PASS_BYTES = 64;
+const BORDER = 4;
+
+const els = {
+  ssid: document.getElementById("ssid"),
+  pass: document.getElementById("pass"),
+  mode: document.getElementById("mode"),
+  msgs: document.getElementById("msgs"),
+  payload: document.getElementById("payload"),
+  spec: document.getElementById("spec"),
+  cv: document.getElementById("cv"),
+  png: document.getElementById("dl-png"),
+  svg: document.getElementById("dl-svg"),
+  print: document.getElementById("do-print"),
+};
+
+let current = null;
+
+const byteLen = (s) => new TextEncoder().encode(s).length;
+
+function validate(ssid, pass) {
+  const errors = [];
+  const warnings = [];
+  if (!ssid) errors.push("SSID 不能为空");
+  if (!pass) errors.push("密码不能为空");
+  if (ssid.includes("+")) errors.push("SSID 不能含加号，固件按前两个加号切分字段，会切错");
+  if (pass.includes("+")) errors.push("密码不能含加号，固件按前两个加号切分字段，会切错");
+  const sb = byteLen(ssid);
+  const pb = byteLen(pass);
+  if (sb > MAX_SSID_BYTES) errors.push(`SSID 占 ${sb} 字节，超过上限 ${MAX_SSID_BYTES}，写 EEPROM 时会被截断`);
+  if (pb > MAX_PASS_BYTES) errors.push(`密码占 ${pb} 字节，超过上限 ${MAX_PASS_BYTES}，写 EEPROM 时会被截断`);
+  if (/[^\x20-\x7e]/.test(ssid + pass)) {
+    warnings.push("含非 ASCII 字符，多数扫码模块的默认输出编码处理不了，建议先实测再批量印");
+  }
+  return { errors, warnings };
+}
+
+function paint(matrix, canvas, scale) {
+  const size = matrix.length;
+  const total = size + BORDER * 2;
+  canvas.width = canvas.height = total * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#000";
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (matrix[r][c]) ctx.fillRect((c + BORDER) * scale, (r + BORDER) * scale, scale, scale);
+    }
+  }
+}
+function toSVG(matrix, scale) {
+  const size = matrix.length;
+  const total = size + BORDER * 2;
+  let path = "";
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (matrix[r][c]) path += `M${c + BORDER} ${r + BORDER}h1v1h-1z`;
+    }
+  }
+  const dim = total * scale;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${dim}" height="${dim}" ` +
+    `viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges">` +
+    `<rect width="${total}" height="${total}" fill="#fff"/>` +
+    `<path d="${path}" fill="#000"/></svg>`;
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const safeName = (s) => (s.replace(/[^A-Za-z0-9_.-]/g, "_") || "wifi");
+
+function refresh() {
+  const ssid = els.ssid.value.trim();
+  const pass = els.pass.value;
+  const mode = els.mode.value;
+  const { errors, warnings } = validate(ssid, pass);
+
+  els.msgs.innerHTML = "";
+  for (const text of errors) {
+    els.msgs.insertAdjacentHTML("beforeend", `<div class="msg err">${text}</div>`);
+  }
+  for (const text of warnings) {
+    els.msgs.insertAdjacentHTML("beforeend", `<div class="msg warn">${text}</div>`);
+  }
+
+  const ok = errors.length === 0;
+  els.png.disabled = els.svg.disabled = els.print.disabled = !ok;
+  if (!ok) {
+    current = null;
+    els.payload.textContent = "—";
+    els.spec.textContent = "";
+    const ctx = els.cv.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, els.cv.width, els.cv.height);
+    return;
+  }
+
+  const payload = `${ssid}+${pass}+${mode}`;
+  current = { payload, ssid, ...encodeQR(payload, "H") };
+  els.payload.textContent = payload;
+  const n = current.matrix.length;
+  els.spec.textContent = `QR 版本 ${current.version} · ${n}×${n} 模块 · 纠错等级 H · 掩码 ${current.mask}`;
+  paint(current.matrix, els.cv, Math.max(4, Math.floor(340 / (n + BORDER * 2))));
+}
+els.png.addEventListener("click", () => {
+  const big = document.createElement("canvas");
+  paint(current.matrix, big, 16);
+  big.toBlob((blob) => saveBlob(blob, `配网码_${safeName(current.ssid)}.png`), "image/png");
+});
+
+els.svg.addEventListener("click", () => {
+  const svg = toSVG(current.matrix, 16);
+  saveBlob(new Blob([svg], { type: "image/svg+xml" }), `配网码_${safeName(current.ssid)}.svg`);
+});
+
+els.print.addEventListener("click", () => window.print());
+
+for (const el of [els.ssid, els.pass, els.mode]) {
+  el.addEventListener("input", refresh);
+  el.addEventListener("change", refresh);
+}
+
+refresh();
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+

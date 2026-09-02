@@ -4,3 +4,7 @@
 .vscode/launch.json
 .vscode/ipch
 .DS_Store
+
+.venv
+配网码_*.png
+配网码_*.svg

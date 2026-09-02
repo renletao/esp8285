@@ -41,6 +41,10 @@ const char* API_PATH = "/api/externalinterface/addMaterialBoxScanningRecord";
 
 const int API_LAST_OCTET = 96;  // Last octet of API server IP
 
+void buzzerBeep(unsigned long durationMs);
+// Buzzer beep at 500ms interval for given duration
+void buzzerBeepAlway(unsigned long durationMs);
+
 // Build API URL based on WiFi IP (use first 3 octets from local IP)
 void buildAPIURL() {
   int API_PORT = 90;
@@ -63,73 +67,6 @@ void buildAPIURL() {
   Serial.println(API_URL);
 }
 
-// Forward declarations for TCP server
-extern String inputBuffer;
-extern unsigned long lastReceiveTime;
-void connectWiFiFromSerial();
-void broadcastToTcp(String msg);
-void broadcastToTcpLn(String msg);
-void buzzerBeep(unsigned long durationMs);
-void buzzerBeepAlway(unsigned long durationMs);
-
-// TCP Debug Server
-#define DEBUG_PORT 8888
-WiFiServer debugServer(DEBUG_PORT);
-WiFiClient debugClient;
-
-void initDebugServer() {
-  debugServer.begin();
-  Serial.print("Debug server started on port ");
-  Serial.println(DEBUG_PORT);
-}
-
-void handleTcpClient() {
-  // Accept new client
-  if (!debugClient || !debugClient.connected()) {
-    if (debugClient) debugClient.stop();
-    debugClient = debugServer.accept();
-    if (debugClient) {
-      Serial.println("TCP debug client connected");
-      debugClient.print("=== ESP8266 Debug Console ===\r\n");
-      debugClient.print("IP: ");
-      debugClient.print(WiFi.localIP().toString());
-      debugClient.print("\r\n");
-    }
-  }
-  
-  // Read commands from client
-  if (debugClient && debugClient.connected() && debugClient.available()) {
-    String cmd = debugClient.readStringUntil('\n');
-    cmd.trim();
-    Serial.print("TCP command: ");
-    Serial.println(cmd);
-    
-    if (cmd == "SIMULATED_SCAN_DATA") {
-      inputBuffer = "SIMULATED_SCAN_DATA";
-      lastReceiveTime = 0;
-    } else if (cmd == "CMD:WIFI_RECONFIG") {
-      connectWiFiFromSerial();
-    } else if (cmd.startsWith("SEND:")) {
-      inputBuffer = cmd.substring(5);
-      lastReceiveTime = 0;
-    }
-    broadcastToTcp("TCP command received\r\n");
-  }
-}
-
-void broadcastToTcp(String msg) {
-  if (debugClient && debugClient.connected()) {
-    debugClient.print(msg);
-  }
-}
-
-void broadcastToTcpLn(String msg) {
-  if (debugClient && debugClient.connected()) {
-    debugClient.print(msg);
-    debugClient.print("\r\n");
-  }
-}
-
 // Global Variables
 String inputBuffer = "";
 String lastSentData = "";
@@ -143,10 +80,6 @@ volatile bool scanTriggered = false;
 volatile unsigned long interruptCount = 0;
 unsigned long lastDebugPrint = 0;
 int extiMode = FALLING;  // default interrupt mode
-
-// Interrupt debounce / filter
-unsigned long lastValidTriggerTime = 0;
-const unsigned long DEBOUNCE_MS = 1000;  // 1000ms debounce window
 
 void IRAM_ATTR onScanInterrupt() {
   scanTriggered = true;
@@ -212,62 +145,56 @@ bool sendToAPI(String data) {
     
     String cleanData = cleanUTF8(data);
     String jsonPayload = "{\"qrcode\":\"" + cleanData + "\"}";
-    String attemptMsg = "Sending (attempt " + String(attempt) + "/" + String(MAX_RETRIES) + "): " + jsonPayload;
-    Serial.println(attemptMsg);
-    broadcastToTcpLn(attemptMsg);
+    Serial.print("Sending (attempt ");
+    Serial.print(attempt);
+    Serial.print("/");
+    Serial.print(MAX_RETRIES);
+    Serial.print("): ");
+    Serial.println(jsonPayload);
     
     int httpCode = http.POST(jsonPayload);
     
-    String httpCodeMsg = "HTTP Code: " + String(httpCode);
-    Serial.println(httpCodeMsg);
-    broadcastToTcpLn(httpCodeMsg);
+    Serial.print("HTTP Code: ");
+    Serial.println(httpCode);
     
     if (httpCode > 0) {
       String response = http.getString();
-      String respMsg = "API Response: " + response;
-      Serial.println(respMsg);
-      broadcastToTcpLn(respMsg);
+      Serial.print("API Response: ");
+      Serial.println(response);
       http.end();
       
       DynamicJsonDocument doc(1024);
       DeserializationError error = deserializeJson(doc, response);
       if (!error && doc.containsKey("data")) {
         float apiData = doc["data"].as<float>();
-        String dataMsg = "API Data: " + String(apiData);
-        Serial.println(dataMsg);
-        broadcastToTcpLn(dataMsg);
+        Serial.print("API Data: ");
+        Serial.println(apiData);
         if ((apiData < OUTTIME)&&(apiData>=0)) {
-          String invalidMsg = "Invalid data, buzzer 10s...";
-          Serial.println(invalidMsg);
-          broadcastToTcpLn("@@ALERT:INVALID_TIME@@");
+          Serial.println("Invalid data, buzzer 10s...");
           buzzerBeepAlway(3000);
         } else {
-          String validMsg = "Valid data, buzzer 3s...";
-          Serial.println(validMsg);
-          broadcastToTcpLn(validMsg);
+          Serial.println("Valid data, buzzer 3s...");
           buzzerBeep(3000);
         }
       }
       
       return true;
     } else {
-      String failMsg = "API Request Failed (attempt " + String(attempt) + ")";
-      Serial.println(failMsg);
-      broadcastToTcpLn(failMsg);
+      Serial.print("API Request Failed (attempt ");
+      Serial.print(attempt);
+      Serial.println(")");
       http.end();
       
       if (attempt < MAX_RETRIES) {
-        String retryMsg = "Retrying in " + String(RETRY_DELAY_MS) + "ms...";
-        Serial.println(retryMsg);
-        broadcastToTcpLn(retryMsg);
+        Serial.print("Retrying in ");
+        Serial.print(RETRY_DELAY_MS);
+        Serial.println("ms...");
         delay(RETRY_DELAY_MS);
       }
     }
   }
   
-  String allFailMsg = "All retries failed";
-  Serial.println(allFailMsg);
-  broadcastToTcpLn(allFailMsg);
+  Serial.println("All retries failed");
   return false;
 }
 
@@ -376,7 +303,6 @@ void connectWiFiFromSerial() {
       attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, FALLING);
       Serial.println("GPIO5 interrupt mode: FALLING");
     }
-    lastValidTriggerTime = 0;
 
     saveConfigToEEPROM(WIFI_SSID, WIFI_PASSWORD, extiMode);
 
@@ -386,7 +312,6 @@ void connectWiFiFromSerial() {
       Serial.print("WiFi connected! IP: ");
       Serial.println(WiFi.localIP().toString());
       buildAPIURL();
-      initDebugServer();
     } else {
       Serial.println("WiFi connection failed");
     }
@@ -404,29 +329,25 @@ void handleSerial() {
       inputBuffer = "";
     }
     inputBuffer += c;
-    String hexStr = "Received char: 0x" + String((unsigned char)c, HEX);
-    Serial.println(hexStr);
-    broadcastToTcpLn(hexStr);
+    Serial.print("Received char: 0x");
+    Serial.println((unsigned char)c, HEX);
     lastReceiveTime = millis();
   }
   
   if (inputBuffer.length() > 0 && millis() - lastReceiveTime > TIMEOUT_MS) {
-    String msg = "Buffer timeout, sending: '" + inputBuffer + "' (length: " + String(inputBuffer.length()) + ")";
-    Serial.println(msg);
-    broadcastToTcpLn(msg);
+    Serial.print("Buffer timeout, sending: '");
+    Serial.print(inputBuffer);
+    Serial.println("' (length: " + String(inputBuffer.length()) + ")");
     bool success = sendToAPI(inputBuffer);
     if (success) {
       Serial.println("API Request Sent");
-      broadcastToTcpLn("API Request Sent");
       lastSentData = inputBuffer;
       apiSent = true;
     } else {
       Serial.println("API Request Failed");
-      broadcastToTcpLn("API Request Failed");
     }
     inputBuffer = "";
     digitalWrite(SCAN_TRIGGER, HIGH);
-    lastValidTriggerTime = 0;  // reset debounce for next trigger
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
   }
 }
@@ -474,11 +395,8 @@ void setup() {
   delay(3000);
   
   // Send init hex: 44 43 4D 4F 4D 41 4E 55
-  byte connectedData[] = {0x44, 0x43, 0x4D, 0x4F, 0x44, 0x4F, 0x4E, 0x45, 0x0D};//DCMODONE
-//  byte connectedData[] = {0x44, 0x43, 0x4D, 0x4F, 0x41, 0x55, 0x54, 0x4F, 0x0D};//DCMOAUTO
+  byte connectedData[] = {0x44, 0x43, 0x4D, 0x4F, 0x4D, 0x41, 0x4E, 0x55};
   Serial.write(connectedData, sizeof(connectedData));
-  byte connectedData2[] = {0x55, 0x43, 0x4F, 0x4D, 0x45, 0x41, 0x4E, 0x31, 0x0D};//UCOMEAN1
-  Serial.write(connectedData2, sizeof(connectedData2));
   
   pinMode(GREEN_LED, OUTPUT);
   pinMode(BLUE_LED, OUTPUT);
@@ -513,7 +431,6 @@ void setup() {
       Serial.print("Auto-connected! IP: ");
       Serial.println(WiFi.localIP().toString());
       buildAPIURL();
-      initDebugServer();
     }
   }
   
@@ -530,22 +447,12 @@ void setup() {
 void loop() {
   handleSerial();
   handleOLED();
-  handleTcpClient();
   
   if (scanTriggered) {
     scanTriggered = false;
-    
-    // Debounce: ignore rapid successive triggers
-    if (millis() - lastValidTriggerTime >= DEBOUNCE_MS) {
-      lastValidTriggerTime = millis();
-      Serial.println("in");
-      broadcastToTcpLn("Trigger: scan started");
-      detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
-      digitalWrite(SCAN_TRIGGER, LOW);
-    } else {
-      Serial.println("Filtered: debounce");
-      broadcastToTcpLn("Filtered: debounce");
-    }
+    Serial.println("in");
+    detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
+    digitalWrite(SCAN_TRIGGER, LOW);
   }
   
   // Check button for re-configuration
