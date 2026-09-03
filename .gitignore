@@ -8,3 +8,6 @@
 .venv
 配网码_*.png
 配网码_*.svg
+
+__pycache__
+tools/mock_server/records.jsonl

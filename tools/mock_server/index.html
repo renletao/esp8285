@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>物料盒扫码实时监控</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --line: #2b3038;
+    --text: #e6e8ec;
+    --muted: #8b929e;
+    --accent: #5aa9ff;
+    --ok: #4ec98f;
+    --warn: #ffb454;
+    --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .2px; }
+  header {
+    display: flex; align-items: baseline; gap: 14px;
+    flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--err); display: inline-block; margin-right: 6px;
+  }
+  .dot.live { background: var(--ok); }
+  .meta { color: var(--muted); font-size: 13px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  label { color: var(--muted); font-size: 13px; }
+  button, input, select {
+    font: inherit; color: var(--text);
+    background: #23272f; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 12px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.danger:hover { border-color: var(--err); color: var(--err); }
+  input[type=number] { width: 88px; }
+  .table-wrap { overflow-x: auto; border-radius: 10px; }
+  table {
+    width: 100%; min-width: 640px;
+    border-collapse: collapse; table-layout: fixed;
+  }
+  th, td {
+    text-align: left; padding: 9px 10px;
+    border-bottom: 1px solid var(--line); vertical-align: top;
+  }
+  th {
+    color: var(--muted); font-weight: 500; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .6px;
+    position: sticky; top: 0; background: var(--panel);
+  }
+  td.code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; word-break: break-all;
+  }
+  td.seq, td.ip, td.time { color: var(--muted); white-space: nowrap; }
+  tr.fresh { animation: flash 1.4s ease-out; }
+  @keyframes flash { from { background: #2a3a4d; } to { background: transparent; } }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 4px;
+    font-size: 12px; border: 1px solid currentColor;
+  }
+  .tag.ok { color: var(--ok); }
+  .tag.alarm { color: var(--warn); }
+  .tag.bad { color: var(--err); }
+  .empty { color: var(--muted); padding: 28px 10px; text-align: center; }
+  details summary { color: var(--muted); cursor: pointer; font-size: 12px; }
+  details pre {
+    margin: 6px 0 0; padding: 8px; background: #14171c;
+    border-radius: 6px; overflow-x: auto; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>物料盒扫码实时监控</h1>
+  <span class="meta"><span class="dot" id="dot"></span><span id="conn">连接中…</span></span>
+  <span class="meta">共 <b id="total">0</b> 条</span>
+  <span class="meta" id="latest"></span>
+</header>
+
+<div class="panel">
+  <div class="row">
+    <label>接口返回 data =</label>
+    <input type="number" id="replyInput" step="0.1" value="3">
+    <button id="applyBtn">应用</button>
+    <button id="okBtn">正常 (3)</button>
+    <button id="alarmBtn">报警 (0)</button>
+    <span class="meta" id="replyHint"></span>
+    <span style="flex:1"></span>
+    <button id="clearBtn" class="danger">清空记录</button>
+  </div>
+  <div class="meta" style="margin-top:8px">
+    设备收到 data 落在 [0, 1) 时长鸣报警 3 秒，其他值间断鸣响 3 秒。
+  </div>
+</div>
+
+<div class="panel" style="padding:0">
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:52px">#</th>
+        <th style="width:96px">时间</th>
+        <th style="width:112px">来源 IP</th>
+        <th>条码内容</th>
+        <th style="width:68px">返回</th>
+        <th style="width:148px">备注</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  </div>
+  <div class="empty" id="empty">等待设备上报…</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let cursor = 0;
+let firstLoad = true;
+
+function tag(cls, text) {
+  const s = document.createElement('span');
+  s.className = 'tag ' + cls;
+  s.textContent = text;
+  return s;
+}
+
+function addRow(rec, animate) {
+  const tr = document.createElement('tr');
+  if (animate) tr.className = 'fresh';
+
+  const seq = document.createElement('td');
+  seq.className = 'seq';
+  seq.textContent = '#' + rec.seq;
+
+  const time = document.createElement('td');
+  time.className = 'time';
+  time.textContent = (rec.time || '').split(' ').pop();
+  time.title = rec.time || '';
+
+  const ip = document.createElement('td');
+  ip.className = 'ip';
+  ip.textContent = rec.ip;
+
+  const code = document.createElement('td');
+  code.className = 'code';
+  if (rec.qrcode === null || rec.qrcode === undefined) {
+    code.appendChild(tag('bad', '解析失败'));
+  } else if (rec.qrcode === '') {
+    code.appendChild(tag('bad', '空内容'));
+  } else {
+    code.textContent = rec.qrcode;
+  }
+  if (rec.parse !== 'json') {
+    const d = document.createElement('details');
+    const sm = document.createElement('summary');
+    sm.textContent = '原始 body';
+    const pre = document.createElement('pre');
+    pre.textContent = rec.raw;
+    d.append(sm, pre);
+    code.appendChild(d);
+  }
+  const reply = document.createElement('td');
+  reply.className = 'code';
+  reply.textContent = rec.reply;
+
+  const note = document.createElement('td');
+  note.appendChild(tag(rec.alarm ? 'alarm' : 'ok', rec.alarm ? '长鸣报警' : '正常'));
+  if (rec.parse === 'regex') {
+    note.append(' ');
+    note.appendChild(tag('bad', '非法 JSON'));
+  }
+
+  tr.append(seq, time, ip, code, reply, note);
+  $('tbody').prepend(tr);
+}
+
+function setConn(ok) {
+  $('dot').className = 'dot' + (ok ? ' live' : '');
+  $('conn').textContent = ok ? '已连接' : '服务未响应';
+}
+
+function setHint(v) {
+  $('replyHint').textContent = (v >= 0 && v < 1) ? '→ 设备会长鸣报警' : '→ 设备正常鸣响';
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/records?since=' + cursor, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    setConn(true);
+    if (d.total < cursor) {
+      cursor = 0;
+      $('tbody').textContent = '';
+    }
+    for (const rec of d.records) {
+      addRow(rec, !firstLoad);
+      if (rec.seq > cursor) cursor = rec.seq;
+      $('latest').textContent = '最新 #' + rec.seq + ' ' + rec.time;
+    }
+    $('total').textContent = d.total;
+    $('empty').style.display = d.total ? 'none' : '';
+    if (document.activeElement !== $('replyInput')) $('replyInput').value = d.reply;
+    setHint(d.reply);
+    firstLoad = false;
+  } catch (e) {
+    setConn(false);
+  }
+}
+async function setReply(v) {
+  if (!Number.isFinite(v)) return;
+  await fetch('/api/reply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: v }),
+  });
+  poll();
+}
+
+$('applyBtn').onclick = () => setReply(parseFloat($('replyInput').value));
+$('okBtn').onclick = () => { $('replyInput').value = 3; setReply(3); };
+$('alarmBtn').onclick = () => { $('replyInput').value = 0; setReply(0); };
+$('clearBtn').onclick = async () => {
+  if (!confirm('清空所有记录？records.jsonl 也会被删除。')) return;
+  await fetch('/api/clear', { method: 'POST' });
+  cursor = 0;
+  $('tbody').textContent = '';
+  poll();
+};
+
+setInterval(poll, 800);
+poll();
+
+
+
+</script>
+
+</body>
+</html>

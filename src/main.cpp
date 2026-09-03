@@ -35,6 +35,8 @@ String WIFI_PASSWORD = "";
 #define EEPROM_MAX_PASS 64
 
 const int OUTTIME = 1;
+const unsigned long WIFI_ATTEMPT_MS = 10000;  // 单轮连接超时
+const int WIFI_MAX_ATTEMPTS = 3;              // 超时后重新 begin 的轮数
 // API Configuration
 String API_URL = "";  // Dynamically generated
 const char* API_PATH = "/api/externalinterface/addMaterialBoxScanningRecord";
@@ -46,11 +48,15 @@ void buzzerBeep(unsigned long durationMs);
 void buzzerBeepAlway(unsigned long durationMs);
 
 // Build API URL based on WiFi IP (use first 3 octets from local IP)
-void buildAPIURL() {
-  int API_PORT = 90;
+bool buildAPIURL() {
   IPAddress localIP = WiFi.localIP();
-  if(localIP[2]==2)
-    API_PORT=92;
+  if (!localIP.isSet() || localIP[0] == 0) {
+    API_URL = "";
+    Serial.print("API URL NOT built, local IP invalid: ");
+    Serial.println(localIP.toString());
+    return false;
+  }
+  int API_PORT = (localIP[2] == 2) ? 92 : 90;
   API_URL = "http://";
   API_URL += localIP[0];
   API_URL += ".";
@@ -62,9 +68,10 @@ void buildAPIURL() {
   API_URL += ":";
   API_URL += API_PORT;
   API_URL += API_PATH;
-  
+
   Serial.print("API URL: ");
   Serial.println(API_URL);
+  return true;
 }
 
 // Global Variables
@@ -81,28 +88,63 @@ volatile unsigned long interruptCount = 0;
 unsigned long lastDebugPrint = 0;
 int extiMode = FALLING;  // default interrupt mode
 
+unsigned long scanActiveSince = 0;               // 0 = 不在扫码状态
+const unsigned long SCAN_TIMEOUT_MS = 5000;      // 触发后多久没收到数据就强制恢复
+const unsigned int MAX_FRAME_LEN = 128;          // 单帧上限，防止缓冲区无限增长
+const int SERIAL_BUDGET_PER_LOOP = 96;           // 每轮 loop 最多读多少字节
+
 void IRAM_ATTR onScanInterrupt() {
   scanTriggered = true;
 //  interruptCount++;
 }
 
+const char* wifiStatusName(int status) {
+  switch (status) {
+    case WL_IDLE_STATUS:     return "idle";
+    case WL_NO_SSID_AVAIL:   return "SSID not found";
+    case WL_CONNECT_FAILED:  return "assoc/auth failed";
+    case WL_CONNECTION_LOST: return "connection lost";
+    case WL_WRONG_PASSWORD:  return "wrong password";
+    case WL_DISCONNECTED:    return "still connecting (timeout)";
+    default:                 return "unknown";
+  }
+}
+
 // WiFi Initialization
 void initWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-    delay(500);
+  for (int attempt = 1; attempt <= WIFI_MAX_ATTEMPTS; attempt++) {
+    WiFi.disconnect();
+    delay(100);  // 紧接着 begin 会偶发连不上，断开需要时间处理完
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_ATTEMPT_MS) {
+      delay(500);
+    }
+    // 卡在 CONNECTING 时再等也没用，重新 begin 才能重置射频状态机
+    if (WiFi.status() == WL_CONNECTED && WiFi.localIP().isSet()) {
+      wifiConnected = true;
+      digitalWrite(GREEN_LED, LOW);
+      digitalWrite(BLUE_LED, HIGH);
+      if (attempt > 1) {
+        Serial.print("WiFi connected on attempt ");
+        Serial.println(attempt);
+      }
+      return;
+    }
+    Serial.print("WiFi attempt ");
+    Serial.print(attempt);
+    Serial.print("/");
+    Serial.print(WIFI_MAX_ATTEMPTS);
+    Serial.print(" failed, status=");
+    Serial.print(WiFi.status());
+    Serial.print(" (");
+    Serial.print(wifiStatusName(WiFi.status()));
+    Serial.println(")");
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiConnected = true;
-    digitalWrite(GREEN_LED, LOW);
-    digitalWrite(BLUE_LED, HIGH);
-  } else {
-    digitalWrite(GREEN_LED, HIGH);
-    digitalWrite(BLUE_LED, LOW);
-  }
+  wifiConnected = false;
+  digitalWrite(GREEN_LED, HIGH);
+  digitalWrite(BLUE_LED, LOW);
 }
 
 // Clean invalid UTF-8 characters from string
@@ -120,6 +162,10 @@ String cleanUTF8(String input) {
 // Send data to API with retry mechanism
 bool sendToAPI(String data) {
   if (!wifiConnected) return false;
+  if (API_URL.length() == 0) {
+    Serial.println("API URL not set, skip sending");
+    return false;
+  }
   
   const int MAX_RETRIES = 2;
   const int RETRY_DELAY_MS = 1000;
@@ -304,16 +350,18 @@ void connectWiFiFromSerial() {
       Serial.println("GPIO5 interrupt mode: FALLING");
     }
 
-    saveConfigToEEPROM(WIFI_SSID, WIFI_PASSWORD, extiMode);
-
     Serial.println("WiFi connecting...");
     initWiFi();
     if (wifiConnected) {
       Serial.print("WiFi connected! IP: ");
       Serial.println(WiFi.localIP().toString());
-      buildAPIURL();
+      if (buildAPIURL()) {
+        saveConfigToEEPROM(WIFI_SSID, WIFI_PASSWORD, extiMode);
+      } else {
+        Serial.println("Config NOT saved (IP lost right after connecting)");
+      }
     } else {
-      Serial.println("WiFi connection failed");
+      Serial.println("WiFi connection failed, config NOT saved");
     }
   } else {
     Serial.println("Invalid format! Use: SSID+PASSWORD+GPIO5EXTIMOD");
@@ -323,15 +371,21 @@ void connectWiFiFromSerial() {
 
 // Serial Receive Handling
 void handleSerial() {
-  while (Serial.available() > 0) {
+  int budget = 0;
+  while (Serial.available() > 0 && budget++ < SERIAL_BUDGET_PER_LOOP) {
     char c = Serial.read();
     if (millis() - lastReceiveTime > TIMEOUT_MS) {
       inputBuffer = "";
     }
-    inputBuffer += c;
-    Serial.print("Received char: 0x");
-    Serial.println((unsigned char)c, HEX);
+    if (inputBuffer.length() < MAX_FRAME_LEN) {
+      inputBuffer += c;
+    }
     lastReceiveTime = millis();
+    // 已经读到数据，立刻撤掉触发信号，否则扫码模块会持续重读并灌满串口
+    if (scanActiveSince != 0) {
+      digitalWrite(SCAN_TRIGGER, HIGH);
+      scanActiveSince = 0;
+    }
   }
   
   if (inputBuffer.length() > 0 && millis() - lastReceiveTime > TIMEOUT_MS) {
@@ -453,6 +507,15 @@ void loop() {
     Serial.println("in");
     detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
     digitalWrite(SCAN_TRIGGER, LOW);
+    scanActiveSince = millis();
+  }
+
+  // 触发后一直没读到数据：恢复 GPIO12 和中断，避免永久假死
+  if (scanActiveSince != 0 && millis() - scanActiveSince > SCAN_TIMEOUT_MS) {
+    scanActiveSince = 0;
+    Serial.println("Scan timeout, nothing read, recovering");
+    digitalWrite(SCAN_TRIGGER, HIGH);
+    attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
   }
   
   // Check button for re-configuration
