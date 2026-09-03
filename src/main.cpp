@@ -46,6 +46,7 @@ const int API_LAST_OCTET = 96;  // Last octet of API server IP
 void buzzerBeep(unsigned long durationMs);
 // Buzzer beep at 500ms interval for given duration
 void buzzerBeepAlway(unsigned long durationMs);
+void buzzerFail();
 
 // Build API URL based on WiFi IP (use first 3 octets from local IP)
 bool buildAPIURL() {
@@ -93,8 +94,12 @@ const unsigned long SCAN_TIMEOUT_MS = 5000;      // 触发后多久没收到数�
 const unsigned int MAX_FRAME_LEN = 128;          // 单帧上限，防止缓冲区无限增长
 const int SERIAL_BUDGET_PER_LOOP = 96;           // 每轮 loop 最多读多少字节
 const unsigned long CONFIG_WAIT_MS = 15000;      // 配网等待输入的总超时
-const unsigned long CONFIG_FRAME_IDLE_MS = 300;  // 配网命令的空闲成帧时间
+const unsigned long CONFIG_FRAME_IDLE_MS = 500;  // 配网命令的空闲成帧时间
 const unsigned int MAX_CONFIG_LEN = 160;         // 配网命令长度上限
+const unsigned long CONFIG_TRIG_LOW_MS = 1500;   // 配网期间触发信号拉低时长
+const unsigned long CONFIG_TRIG_HIGH_MS = 300;   // 触发信号间歇时长，给模块恢复
+unsigned long lastWifiCheck = 0;
+const unsigned long WIFI_CHECK_MS = 5000;        // 主循环里同步 WiFi 真实状态的间隔
 
 void IRAM_ATTR onScanInterrupt() {
   scanTriggered = true;
@@ -116,6 +121,7 @@ const char* wifiStatusName(int status) {
 // WiFi Initialization
 void initWiFi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);  // 掉线由 SDK 自动重连，主循环只负责跟踪状态
   for (int attempt = 1; attempt <= WIFI_MAX_ATTEMPTS; attempt++) {
     WiFi.disconnect();
     delay(100);  // 紧接着 begin 会偶发连不上，断开需要时间处理完
@@ -247,6 +253,17 @@ bool sendToAPI(String data) {
   return false;
 }
 
+// 上报失败提示：急促三短声，与正常（间歇3声）和异常（长鸣3秒）都能明显区分
+void buzzerFail() {
+  pinMode(ALARM_PIN, OUTPUT);
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(ALARM_PIN, HIGH);
+    delay(100);
+    digitalWrite(ALARM_PIN, LOW);
+    delay(100);
+  }
+}
+
 // Buzzer beep at 500ms interval for given duration
 void buzzerBeep(unsigned long durationMs) {
   pinMode(ALARM_PIN, OUTPUT);
@@ -309,17 +326,27 @@ bool loadConfigFromEEPROM(String &ssid, String &pass, int &mode) {
 // ================== WiFi Config from Serial ==================
 void connectWiFiFromSerial() {
   while (Serial.available()) Serial.read();  // 丢掉进入配网前的残留字节
-  digitalWrite(SCAN_TRIGGER, LOW);
+  inputBuffer = "";                          // 半截条码不能留到配网结束后被当成整帧上报
   Serial.println("\nEnter WiFi config (SSID+PASSWORD+GPIO5EXTIMOD): ");
   Serial.println("GPIO5EXTIMOD: 1=rising edge, 0=falling edge");
+
+  // 触发信号做成占空循环，不连续拉低，避免扫码模块被长按锁死（照明常亮不再响应）
   unsigned long waitStart = millis();
+  unsigned long phaseStart = millis();
+  bool trigLow = true;
+  digitalWrite(SCAN_TRIGGER, LOW);
   while (!Serial.available()) {
     if (millis() - waitStart > CONFIG_WAIT_MS) {
       digitalWrite(SCAN_TRIGGER, HIGH);
       Serial.println("Config timeout, back to standby");
       return;
     }
-    delay(100);
+    if (millis() - phaseStart >= (trigLow ? CONFIG_TRIG_LOW_MS : CONFIG_TRIG_HIGH_MS)) {
+      trigLow = !trigLow;
+      digitalWrite(SCAN_TRIGGER, trigLow ? LOW : HIGH);
+      phaseStart = millis();
+    }
+    delay(10);
 #ifdef ENABLE_OLED
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB08_tr);
@@ -429,6 +456,7 @@ void handleSerial() {
       apiSent = true;
     } else {
       Serial.println("API Request Failed");
+      buzzerFail();  // 上报没成功必须让现场听见，否则会当成扫上了
     }
     inputBuffer = "";
     digitalWrite(SCAN_TRIGGER, HIGH);
@@ -557,5 +585,23 @@ void loop() {
     }
   }
   
+  // 跟踪 WiFi 真实状态：SDK 负责自动重连，这里只同步标志、灯和 API 地址
+  if (millis() - lastWifiCheck > WIFI_CHECK_MS) {
+    lastWifiCheck = millis();
+    bool up = (WiFi.status() == WL_CONNECTED && WiFi.localIP().isSet());
+    if (up != wifiConnected) {
+      wifiConnected = up;
+      digitalWrite(GREEN_LED, up ? LOW : HIGH);
+      digitalWrite(BLUE_LED, up ? HIGH : LOW);
+      if (up) {
+        Serial.println("WiFi reconnected");
+        buildAPIURL();  // 重连后 IP 可能变了，地址要重新拼
+      } else {
+        API_URL = "";
+        Serial.println("WiFi lost");
+      }
+    }
+  }
+
   delay(100);
 }
