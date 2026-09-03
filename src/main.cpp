@@ -92,6 +92,9 @@ unsigned long scanActiveSince = 0;               // 0 = 不在扫码状态
 const unsigned long SCAN_TIMEOUT_MS = 5000;      // 触发后多久没收到数据就强制恢复
 const unsigned int MAX_FRAME_LEN = 128;          // 单帧上限，防止缓冲区无限增长
 const int SERIAL_BUDGET_PER_LOOP = 96;           // 每轮 loop 最多读多少字节
+const unsigned long CONFIG_WAIT_MS = 15000;      // 配网等待输入的总超时
+const unsigned long CONFIG_FRAME_IDLE_MS = 300;  // 配网命令的空闲成帧时间
+const unsigned int MAX_CONFIG_LEN = 160;         // 配网命令长度上限
 
 void IRAM_ATTR onScanInterrupt() {
   scanTriggered = true;
@@ -305,10 +308,17 @@ bool loadConfigFromEEPROM(String &ssid, String &pass, int &mode) {
 
 // ================== WiFi Config from Serial ==================
 void connectWiFiFromSerial() {
+  while (Serial.available()) Serial.read();  // 丢掉进入配网前的残留字节
   digitalWrite(SCAN_TRIGGER, LOW);
   Serial.println("\nEnter WiFi config (SSID+PASSWORD+GPIO5EXTIMOD): ");
   Serial.println("GPIO5EXTIMOD: 1=rising edge, 0=falling edge");
+  unsigned long waitStart = millis();
   while (!Serial.available()) {
+    if (millis() - waitStart > CONFIG_WAIT_MS) {
+      digitalWrite(SCAN_TRIGGER, HIGH);
+      Serial.println("Config timeout, back to standby");
+      return;
+    }
     delay(100);
 #ifdef ENABLE_OLED
     u8g2.clearBuffer();
@@ -321,7 +331,27 @@ void connectWiFiFromSerial() {
 #endif
   }
 
-  String config = Serial.readStringUntil('\n');
+  // 收到第一个字节就撤销触发，否则扫码模块会持续重读并灌满串口
+  digitalWrite(SCAN_TRIGGER, HIGH);
+
+  // 按空闲超时成帧：CR / LF / CRLF / 无终止符都能正确收尾，且长度有上限
+  String config = "";
+  unsigned long lastByte = millis();
+  while (millis() - lastByte < CONFIG_FRAME_IDLE_MS) {
+    if (Serial.available()) {
+      char c = Serial.read();
+      lastByte = millis();
+      if (c == '\r' || c == '\n') {
+        if (config.length() > 0) break;
+      } else if (config.length() < MAX_CONFIG_LEN) {
+        config += c;
+      }
+    } else {
+      delay(1);
+    }
+  }
+  while (Serial.available()) Serial.read();  // 丢掉重复读出的多余帧
+
   config.trim();
   Serial.print("Received config: '");
   Serial.print(config);
