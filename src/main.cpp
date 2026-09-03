@@ -90,6 +90,11 @@ unsigned long lastDebugPrint = 0;
 int extiMode = FALLING;  // default interrupt mode
 
 unsigned long scanActiveSince = 0;               // 0 = 不在扫码状态
+unsigned long scanCooldownUntil = 0;             // 该时刻之前收到的触发全部丢弃
+int emptyScanStreak = 0;                         // 连续几次触发后没读到数据
+const unsigned long SCAN_COOLDOWN_MS = 500;      // 撤销触发后的重触发冷却
+const unsigned long SCAN_BACKOFF_MS = 10000;     // 连续空扫后的退避时长
+const int EMPTY_SCAN_BACKOFF_AT = 3;             // 连续空扫几次开始退避
 const unsigned long SCAN_TIMEOUT_MS = 5000;      // 触发后多久没收到数据就强制恢复
 const unsigned int MAX_FRAME_LEN = 128;          // 单帧上限，防止缓冲区无限增长
 const int SERIAL_BUDGET_PER_LOOP = 96;           // 每轮 loop 最多读多少字节
@@ -442,6 +447,7 @@ void handleSerial() {
     if (scanActiveSince != 0) {
       digitalWrite(SCAN_TRIGGER, HIGH);
       scanActiveSince = 0;
+      emptyScanStreak = 0;
     }
   }
   
@@ -461,6 +467,8 @@ void handleSerial() {
     inputBuffer = "";
     digitalWrite(SCAN_TRIGGER, HIGH);
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
+    scanTriggered = false;  // 丢掉重挂中断瞬间产生的触发
+    scanCooldownUntil = millis() + SCAN_COOLDOWN_MS;
   }
 }
 
@@ -562,18 +570,34 @@ void loop() {
   
   if (scanTriggered) {
     scanTriggered = false;
-    Serial.println("in");
-    detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
-    digitalWrite(SCAN_TRIGGER, LOW);
-    scanActiveSince = millis();
+    // 冷却期内的触发一律丢弃：撤销触发信号时扫码模块状态脚的跳变会立刻自触发
+    if (millis() >= scanCooldownUntil) {
+      Serial.println("in");
+      detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
+      digitalWrite(SCAN_TRIGGER, LOW);
+      scanActiveSince = millis();
+    }
   }
 
   // 触发后一直没读到数据：恢复 GPIO12 和中断，避免永久假死
   if (scanActiveSince != 0 && millis() - scanActiveSince > SCAN_TIMEOUT_MS) {
     scanActiveSince = 0;
-    Serial.println("Scan timeout, nothing read, recovering");
+    emptyScanStreak++;
     digitalWrite(SCAN_TRIGGER, HIGH);
+    if (emptyScanStreak >= EMPTY_SCAN_BACKOFF_AT) {
+      // 连续空扫说明 GPIO5 在自激或现场没有码，拉长冷却让模块真正休息
+      scanCooldownUntil = millis() + SCAN_BACKOFF_MS;
+      Serial.print("Scan timeout x");
+      Serial.print(emptyScanStreak);
+      Serial.print(", backing off ");
+      Serial.print(SCAN_BACKOFF_MS / 1000);
+      Serial.println("s");
+    } else {
+      scanCooldownUntil = millis() + SCAN_COOLDOWN_MS;
+      Serial.println("Scan timeout, nothing read, recovering");
+    }
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
+    scanTriggered = false;  // 丢掉重挂中断瞬间产生的触发
   }
   
   // Check button for re-configuration
