@@ -1,20 +1,26 @@
+/*
+ * ESP8266 scan data uploader / ESP8266 É¨ÂëÊı¾İÉÏ±¨³ÌĞò
+ * Comments follow a concise bilingual embedded-project style.
+ * ×¢ÊÍ²ÉÓÃ¼ò½àµÄÖĞÓ¢Ë«ÓïÇ¶ÈëÊ½¹¤³Ì·ç¸ñ¡£
+ */
+
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 
-// OLED Enable/Disable (comment out to disable OLED)
-//#define ENABLE_OLED
-
 #ifdef ENABLE_OLED
 #include <Wire.h>
 #include <U8g2lib.h>
-// OLED Configuration (GPIO12/GPIO14 repurposed as SCAN_TRIGGER/BUTTON, re-enable OLED needs different SCL/SDA pins)
+
 U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0,/*scl*/12,/*sda*/14, /* reset=*/ U8X8_PIN_NONE);
 #endif
 
-// WiFi Configuration (input via serial)
+// Wi-Fi network name used for connection.
+// ÓÃÓÚÁ¬½ÓÂ·ÓÉÆ÷µÄ Wi-Fi Ãû³Æ¡£
 String WIFI_SSID = "";
+// Password corresponding to WIFI_SSID.
+// Óë Wi-Fi Ãû³Æ¶ÔÓ¦µÄÃÜÂë¡£
 String WIFI_PASSWORD = "";
 
 #define ALARM_PIN 13
@@ -24,7 +30,6 @@ String WIFI_PASSWORD = "";
 #define SCAN_INTERRUPT 5
 #define BUTTON_PIN 14
 
-// EEPROM addresses
 #define EEPROM_SIZE 512
 #define EEPROM_MAGIC_ADDR 0
 #define EEPROM_MAGIC_VAL 0xAA
@@ -34,30 +39,49 @@ String WIFI_PASSWORD = "";
 #define EEPROM_MAX_SSID 32
 #define EEPROM_MAX_PASS 64
 
+// Returned data below this threshold is treated as an abnormal result.
+// API ·µ»ØÖµµÍÓÚ´ËãĞÖµÊ±°´Òì³£½á¹û´¦Àí¡£
 const int OUTTIME = 1;
-const unsigned long WIFI_ATTEMPT_MS = 10000;  // å•è½®è¿æ¥è¶…æ—¶
-const int WIFI_MAX_ATTEMPTS = 3;              // è¶…æ—¶åé‡æ–° begin çš„è½®æ•°
-// API Configuration
-String API_URL = "";  // Dynamically generated
+// Maximum wait time for one Wi-Fi connection attempt, in milliseconds.
+// µ¥´Î Wi-Fi Á¬½ÓµÄ×î³¤µÈ´ıÊ±¼ä£¬µ¥Î»ÎªºÁÃë¡£
+const unsigned long WIFI_ATTEMPT_MS = 10000;
+// Maximum number of connection attempts.
+// Wi-Fi ×î´óÁ¬½Ó³¢ÊÔ´ÎÊı¡£
+const int WIFI_MAX_ATTEMPTS = 3;
+
+// Complete API URL generated after Wi-Fi obtains an IP address.
+// Wi-Fi »ñÈ¡ IP ºó¶¯Ì¬Éú³ÉµÄÍêÕû API µØÖ·¡£
+String API_URL = "";
+// Fixed server endpoint path.
+// ·şÎñ¶Ë¹Ì¶¨½Ó¿ÚÂ·¾¶¡£
 const char* API_PATH = "/api/externalinterface/addMaterialBoxScanningRecord";
 
-const int API_LAST_OCTET = 96;  // Last octet of API server IP
+// Last octet of the API server address.
+// API ·şÎñÆ÷ IP µØÖ·µÄ×îºóÒ»¶Î¡£
+const int API_LAST_OCTET = 96;
 
 void buzzerBeep(unsigned long durationMs);
-// Buzzer beep at 500ms interval for given duration
+
 void buzzerBeepAlway(unsigned long durationMs);
 void buzzerFail();
 
-// Build API URL based on WiFi IP (use first 3 octets from local IP)
+/**
+ * @brief  Build the API URL from the local IP address.
+ * @brief  ¸ù¾İ±¾»ú IP µØÖ·Æ´½Ó API ÇëÇóµØÖ·¡£
+ * @retval true  URL generated successfully.
+ * @retval true  µØÖ·Éú³É³É¹¦¡£
+ */
 bool buildAPIURL() {
-  IPAddress localIP = WiFi.localIP();
+  // Local IP assigned by the access point.
+  // Â·ÓÉÆ÷·ÖÅä¸øÉè±¸µÄ±¾»ú IP µØÖ·¡£
   if (!localIP.isSet() || localIP[0] == 0) {
     API_URL = "";
     Serial.print("API URL NOT built, local IP invalid: ");
     Serial.println(localIP.toString());
     return false;
   }
-  int API_PORT = (localIP[2] == 2) ? 92 : 90;
+  // Select the server port according to the third IP octet.
+  // ¸ù¾İ±¾»ú IP µÚÈı¶ÎÑ¡Ôñ·şÎñ¶Ë¶Ë¿Ú¡£
   API_URL = "http://";
   API_URL += localIP[0];
   API_URL += ".";
@@ -75,42 +99,106 @@ bool buildAPIURL() {
   return true;
 }
 
-// Global Variables
+// Bytes collected from the scanner until the frame idle timeout expires.
+// É¨ÃèÄ£¿éÊäÈë»º³åÇø£¬¿ÕÏĞ³¬Ê±ºóÊÓÎªÒ»Ö¡Êı¾İ¡£
 String inputBuffer = "";
+// Most recently uploaded scan data, used by the OLED display.
+// ×î½üÒ»´ÎÉÏ±¨µÄÊı¾İ£¬¹© OLED ÏÔÊ¾¡£
 String lastSentData = "";
+// Timestamp of the most recently received serial byte.
+// ×î½üÒ»´ÎÊÕµ½´®¿Ú×Ö½ÚµÄÊ±¼ä´Á¡£
 unsigned long lastReceiveTime = 0;
+// Serial idle interval that terminates one scan frame.
+// ´®¿ÚÁ¬Ğø¿ÕÏĞ³¬¹ı´ËÊ±¼ä¼´ÈÏÎªÒ»Ö¡½áÊø¡£
 const unsigned long TIMEOUT_MS = 500;
+// Cached link state used by the application logic.
+// ³ÌĞò»º´æµÄ Wi-Fi Á¬½Ó×´Ì¬¡£
 bool wifiConnected = false;
+// Indicates whether the latest frame was uploaded successfully.
+// ±ê¼Ç×î½üÒ»Ö¡Êı¾İÊÇ·ñÉÏ±¨³É¹¦¡£
 bool apiSent = false;
 
-// Scan interrupt flag and debug counter
+// Set by the GPIO5 ISR and consumed in loop().
+// ÓÉ GPIO5 ÖĞ¶ÏÖÃÎ»£¬ÔÚ loop() ÖĞÇå³ıºÍ´¦Àí¡£
 volatile bool scanTriggered = false;
+// Optional interrupt counter reserved for diagnostics.
+// Ô¤ÁôµÄÖĞ¶Ï¼ÆÊıÆ÷£¬ÓÃÓÚµ÷ÊÔÍ³¼Æ¡£
 volatile unsigned long interruptCount = 0;
+// Timestamp reserved for periodic debug output.
+// Ô¤ÁôµÄµ÷ÊÔÊä³öÊ±¼ä´Á¡£
 unsigned long lastDebugPrint = 0;
-int extiMode = FALLING;  // default interrupt mode
+// Current GPIO5 interrupt edge, falling edge by default.
+// µ±Ç° GPIO5 ÖĞ¶Ï±ßÑØ£¬Ä¬ÈÏÊ¹ÓÃÏÂ½µÑØ¡£
+int extiMode = FALLING;
 
-unsigned long scanActiveSince = 0;               // 0 = ä¸åœ¨æ‰«ç çŠ¶æ€
-unsigned long scanCooldownUntil = 0;             // è¯¥æ—¶åˆ»ä¹‹å‰æ”¶åˆ°çš„è§¦å‘å…¨éƒ¨ä¸¢å¼ƒ
-int emptyScanStreak = 0;                         // è¿ç»­å‡ æ¬¡è§¦å‘åæ²¡è¯»åˆ°æ•°æ®
-const unsigned long SCAN_COOLDOWN_MS = 500;      // æ’¤é”€è§¦å‘åçš„é‡è§¦å‘å†·å´
-const unsigned long SCAN_BACKOFF_MS = 10000;     // è¿ç»­ç©ºæ‰«åçš„é€€é¿æ—¶é•¿
-const int EMPTY_SCAN_BACKOFF_AT = 10;             // è¿ç»­ç©ºæ‰«å‡ æ¬¡å¼€å§‹é€€é¿
-const unsigned long SCAN_TIMEOUT_MS = 5000;      // è§¦å‘åå¤šä¹…æ²¡æ”¶åˆ°æ•°æ®å°±å¼ºåˆ¶æ¢å¤
-const unsigned int MAX_FRAME_LEN = 128;          // å•å¸§ä¸Šé™ï¼Œé˜²æ­¢ç¼“å†²åŒºæ— é™å¢é•¿
-const int SERIAL_BUDGET_PER_LOOP = 96;           // æ¯è½® loop æœ€å¤šè¯»å¤šå°‘å­—èŠ‚
-const unsigned long CONFIG_WAIT_MS = 15000;      // é…ç½‘ç­‰å¾…è¾“å…¥çš„æ€»è¶…æ—¶
-const unsigned long CONFIG_FRAME_IDLE_MS = 500;  // é…ç½‘å‘½ä»¤çš„ç©ºé—²æˆå¸§æ—¶é—´
-const unsigned int MAX_CONFIG_LEN = 160;         // é…ç½‘å‘½ä»¤é•¿åº¦ä¸Šé™
-const unsigned long CONFIG_TRIG_LOW_MS = 1500;   // é…ç½‘æœŸé—´è§¦å‘ä¿¡å·æ‹‰ä½æ—¶é•¿
-const unsigned long CONFIG_TRIG_HIGH_MS = 300;   // è§¦å‘ä¿¡å·é—´æ­‡æ—¶é•¿ï¼Œç»™æ¨¡å—æ¢å¤
+// Non-zero while the scanner is expected to send a frame.
+// É¨ÃèÄ£¿é¹¤×÷ÆÚ¼ä¼ÇÂ¼¿ªÊ¼Ê±¼ä£¬0 ±íÊ¾Î´´¦ÓÚÉ¨Ãè×´Ì¬¡£
+unsigned long scanActiveSince = 0;
+// Do not accept another trigger before this timestamp.
+// ÔÚ¸ÃÊ±¼ä´ÁÖ®Ç°ºöÂÔĞÂµÄÉ¨Ãè´¥·¢¡£
+unsigned long scanCooldownUntil = 0;
+// Number of consecutive scan timeouts without received data.
+// Á¬ĞøÎ´ÊÕµ½Êı¾İµÄÉ¨Ãè³¬Ê±´ÎÊı¡£
+int emptyScanStreak = 0;
+// Minimum interval between two scan operations.
+// Á½´ÎÉ¨ÃèÖ®¼äµÄ×îĞ¡¼ä¸ô¡£
+const unsigned long SCAN_COOLDOWN_MS = 500;
+// Backoff interval after repeated empty scans.
+// Á¬Ğø¿ÕÉ¨ÃèºóµÄÍË±ÜµÈ´ıÊ±¼ä¡£
+const unsigned long SCAN_BACKOFF_MS = 10000;
+// Start backoff after this many consecutive empty scans.
+// Á¬Ğø¿ÕÉ¨Ãè´ïµ½´Ë´ÎÊıºó½øÈëÍË±Ü¡£
+const int EMPTY_SCAN_BACKOFF_AT = 3;
+// Maximum time to wait for scanner serial data.
+// µÈ´ıÉ¨ÃèÄ£¿é´®¿ÚÊı¾İµÄ×î³¤Ê±¼ä¡£
+const unsigned long SCAN_TIMEOUT_MS = 5000;
+// Maximum length accepted for one scan frame.
+// µ¥Ö¡É¨ÂëÊı¾İÔÊĞíµÄ×î´ó³¤¶È¡£
+const unsigned int MAX_FRAME_LEN = 128;
+// Maximum serial bytes processed in one loop iteration.
+// Ã¿´Î loop ×î¶à´¦ÀíµÄ´®¿Ú×Ö½ÚÊı¡£
+const int SERIAL_BUDGET_PER_LOOP = 96;
+// Maximum wait time for the first configuration byte.
+// µÈ´ıÅäÖÃÊ××Ö½ÚµÄ×î³¤Ê±¼ä¡£
+const unsigned long CONFIG_WAIT_MS = 15000;
+// Idle interval used to terminate the configuration frame.
+// ÅäÖÃÖ¡Á¬Ğø¿ÕÏĞ³¬¹ı´ËÊ±¼ä¼´½áÊø½ÓÊÕ¡£
+const unsigned long CONFIG_FRAME_IDLE_MS = 500;
+// Maximum length of a serial configuration command.
+// ´®¿ÚÅäÖÃÃüÁîÔÊĞíµÄ×î´ó³¤¶È¡£
+const unsigned int MAX_CONFIG_LEN = 160;
+// Duration of the low phase on SCAN_TRIGGER during configuration.
+// ÅäÖÃÆÚ¼ä SCAN_TRIGGER ±£³ÖµÍµçÆ½µÄÊ±¼ä¡£
+const unsigned long CONFIG_TRIG_LOW_MS = 1500;
+// Duration of the high phase used to reset the scanner input.
+// ÅäÖÃÆÚ¼äÓÃÓÚ¸´Î»É¨ÃèÄ£¿éµÄ¸ßµçÆ½¼ä¸ô¡£
+const unsigned long CONFIG_TRIG_HIGH_MS = 300;
+// Timestamp of the last Wi-Fi status check.
+// ×î½üÒ»´Î Wi-Fi ×´Ì¬¼ì²éµÄÊ±¼ä´Á¡£
 unsigned long lastWifiCheck = 0;
-const unsigned long WIFI_CHECK_MS = 5000;        // ä¸»å¾ªç¯é‡ŒåŒæ­¥ WiFi çœŸå®çŠ¶æ€çš„é—´éš”
+// Period of background Wi-Fi status checks.
+// ºóÌ¨¼ì²é Wi-Fi ×´Ì¬µÄÖÜÆÚ¡£
+const unsigned long WIFI_CHECK_MS = 5000;
 
+/**
+ * @brief  Record a scanner interrupt event.
+ * @brief  ¼ÇÂ¼É¨ÃèÄ£¿éÖĞ¶ÏÊÂ¼ş¡£
+ * @note   Keep the ISR short; processing is performed in loop().
+ * @note   ÖĞ¶Ïº¯Êı±£³Ö¼ò¶Ì£¬¾ßÌå´¦Àí·ÅÔÚ loop() ÖĞ¡£
+ */
 void IRAM_ATTR onScanInterrupt() {
   scanTriggered = true;
-//  interruptCount++;
+
 }
 
+/**
+ * @brief  Convert a Wi-Fi status code to readable text.
+ * @brief  ½« Wi-Fi ×´Ì¬Âë×ª»»Îª¿É¶ÁÎÄ±¾¡£
+ * @param  status Wi-Fi status code.
+ * @param  status Wi-Fi ×´Ì¬Âë¡£
+ * @retval const char* Status description.
+ * @retval const char* ×´Ì¬ÃèÊö×Ö·û´®¡£
+ */
 const char* wifiStatusName(int status) {
   switch (status) {
     case WL_IDLE_STATUS:     return "idle";
@@ -123,24 +211,40 @@ const char* wifiStatusName(int status) {
   }
 }
 
-// WiFi Initialization
+/**
+ * @brief  Initialize Wi-Fi and retry the connection.
+ * @brief  ³õÊ¼»¯ Wi-Fi£¬²¢ÔÚÊ§°ÜÊ±½øĞĞÖØÊÔ¡£
+ */
 void initWiFi() {
+  // Select station mode before connecting to the access point.
+  // Á¬½ÓÂ·ÓÉÆ÷Ç°ÏÈÉèÖÃÎª STA£¨¿Í»§¶Ë£©Ä£Ê½¡£
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);  // æ‰çº¿ç”± SDK è‡ªåŠ¨é‡è¿ï¼Œä¸»å¾ªç¯åªè´Ÿè´£è·Ÿè¸ªçŠ¶æ€
+  // Let the SDK reconnect in the background when possible.
+  // ÆôÓÃ SDK µÄºóÌ¨×Ô¶¯ÖØÁ¬ÄÜÁ¦¡£
+  WiFi.setAutoReconnect(true);
+  // Retry counter for Wi-Fi connection attempts.
+  // Wi-Fi Á¬½Ó³¢ÊÔ¼ÆÊıÆ÷¡£
   for (int attempt = 1; attempt <= WIFI_MAX_ATTEMPTS; attempt++) {
+    // Clear the previous connection state before retrying.
+    // Ã¿´ÎÖØÊÔÇ°ÏÈÇå³ıÉÏÒ»´ÎµÄÁ¬½Ó×´Ì¬¡£
     WiFi.disconnect();
-    delay(100);  // ç´§æ¥ç€ begin ä¼šå¶å‘è¿ä¸ä¸Šï¼Œæ–­å¼€éœ€è¦æ—¶é—´å¤„ç†å®Œ
+    delay(100);
+    // Start a connection attempt with the configured credentials.
+    // Ê¹ÓÃµ±Ç°ÅäÖÃµÄÕËºÅÃÜÂë·¢ÆğÁ¬½Ó¡£
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    unsigned long start = millis();
+      // Start time of the current connection attempt.
+    // ±¾´ÎÁ¬½Ó³¢ÊÔµÄ¿ªÊ¼Ê±¼ä¡£
+    // Poll the link state until connected or the attempt times out.
+    // ³ÖĞø¼ì²éÁ¬½Ó×´Ì¬£¬Ö±µ½³É¹¦»ò±¾´Î³¢ÊÔ³¬Ê±¡£
+    while (WiFi.status() != WL_CONNECTED
     while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_ATTEMPT_MS) {
       delay(500);
     }
-    // å¡åœ¨ CONNECTING æ—¶å†ç­‰ä¹Ÿæ²¡ç”¨ï¼Œé‡æ–° begin æ‰èƒ½é‡ç½®å°„é¢‘çŠ¶æ€æœº
+
     if (WiFi.status() == WL_CONNECTED && WiFi.localIP().isSet()) {
       wifiConnected = true;
       digitalWrite(GREEN_LED, LOW);
       digitalWrite(BLUE_LED, HIGH);
-      buzzerBeepAlway(100);//è”ç½‘æˆåŠŸå“500ms
       if (attempt > 1) {
         Serial.print("WiFi connected on attempt ");
         Serial.println(attempt);
@@ -160,12 +264,19 @@ void initWiFi() {
   wifiConnected = false;
   digitalWrite(GREEN_LED, HIGH);
   digitalWrite(BLUE_LED, LOW);
-  buzzerBeepAlway(2000);//è”ç½‘å¤±è´¥å“3s
-
 }
 
-// Clean invalid UTF-8 characters from string
+/**
+ * @brief  Remove non-printable characters from input data.
+ * @brief  ÇåÀíÊäÈëÊı¾İÖĞµÄ²»¿É´òÓ¡×Ö·û¡£
+ * @param  input Raw input string.
+ * @param  input Ô­Ê¼ÊäÈë×Ö·û´®¡£
+ * @retval String Cleaned string.
+ * @retval String ÇåÀíºóµÄ×Ö·û´®¡£
+ */
 String cleanUTF8(String input) {
+  // Output string built from printable input characters.
+  // ÓÉ¿É´òÓ¡×Ö·ûÆ´½Ó³öµÄÊä³ö×Ö·û´®¡£
   String result = "";
   for (int i = 0; i < input.length(); i++) {
     char c = input[i];
@@ -176,7 +287,14 @@ String cleanUTF8(String input) {
   return result;
 }
 
-// Send data to API with retry mechanism
+/**
+ * @brief  Upload one scan frame to the HTTP API.
+ * @brief  ½«Ò»Ö¡É¨ÂëÊı¾İÉÏ´«µ½ HTTP API¡£
+ * @param  data Scan frame content.
+ * @param  data É¨ÂëÖ¡ÄÚÈİ¡£
+ * @retval true Request completed; false request failed.
+ * @retval true ÇëÇóÍê³É£»false ÇëÇóÊ§°Ü¡£
+ */
 bool sendToAPI(String data) {
   if (!wifiConnected) return false;
   if (API_URL.length() == 0) {
@@ -206,7 +324,11 @@ bool sendToAPI(String data) {
     
     http.addHeader("Content-Type", "application/json");
     
+    // Sanitized scan content used in the JSON payload.
+    // ÇåÀíºóµÄÉ¨ÂëÄÚÈİ£¬ÓÃÓÚ¹¹Ôì JSON ÇëÇóÌå¡£
     String cleanData = cleanUTF8(data);
+    // JSON body sent to the server.
+    // Òª·¢ËÍ¸ø·şÎñÆ÷µÄ JSON ÇëÇóÌå¡£
     String jsonPayload = "{\"qrcode\":\"" + cleanData + "\"}";
     Serial.print("Sending (attempt ");
     Serial.print(attempt);
@@ -215,17 +337,30 @@ bool sendToAPI(String data) {
     Serial.print("): ");
     Serial.println(jsonPayload);
     
+    // Submit the JSON payload and save the HTTP result code.
+    // ·¢ËÍ JSON ÇëÇó²¢±£´æ HTTP ·µ»ØÂë¡£
+    // HTTP status code returned by POST().
+    // POST() ·µ»ØµÄ HTTP ×´Ì¬Âë¡£
     int httpCode = http.POST(jsonPayload);
     
     Serial.print("HTTP Code: ");
     Serial.println(httpCode);
     
     if (httpCode > 0) {
+      // Raw response body returned by the HTTP server.
+      // HTTP ·şÎñÆ÷·µ»ØµÄÔ­Ê¼ÏìÓ¦ÕıÎÄ¡£
       String response = http.getString();
       Serial.print("API Response: ");
       Serial.println(response);
       http.end();
       
+      // Parse the response body to obtain the server result.
+      // ½âÎöÏìÓ¦Ìå£¬ÒÔ»ñÈ¡·şÎñÆ÷·µ»ØµÄÊı¾İ¡£
+          // Temporary JSON document used to parse the server response.
+      // ÓÃÓÚ½âÎö·şÎñÆ÷ÏìÓ¦µÄÁÙÊ± JSON ÎÄµµ¡£
+      DynamicJsonDocument doc(1024);
+          // Temporary JSON document used to parse the server response.
+      // ÓÃÓÚ½âÎö·şÎñÆ÷ÏìÓ¦µÄÁÙÊ± JSON ÎÄµµ¡£
       DynamicJsonDocument doc(1024);
       DeserializationError error = deserializeJson(doc, response);
       if (!error && doc.containsKey("data")) {
@@ -233,10 +368,10 @@ bool sendToAPI(String data) {
         Serial.print("API Data: ");
         Serial.println(apiData);
         if ((apiData < OUTTIME)&&(apiData>=0)) {
-          Serial.println("invalid data, buzzer 5s...");//æ•°æ®æ— æ•ˆ
-          buzzerBeepAlway(5000);
+          Serial.println("Invalid data, buzzer 3s...");
+          buzzerBeepAlway(3000);
         } else {
-          Serial.println("valid data, buzzer 3s...");//æ•°æ®æœ‰æ•ˆ
+          Serial.println("Valid data, buzzer 3s...");
           buzzerBeep(3000);
         }
       }
@@ -261,7 +396,10 @@ bool sendToAPI(String data) {
   return false;
 }
 
-// ä¸ŠæŠ¥å¤±è´¥æç¤ºï¼šæ€¥ä¿ƒä¸‰çŸ­å£°ï¼Œä¸æ­£å¸¸ï¼ˆé—´æ­‡3å£°ï¼‰å’Œå¼‚å¸¸ï¼ˆé•¿é¸£3ç§’ï¼‰éƒ½èƒ½æ˜æ˜¾åŒºåˆ†
+/**
+ * @brief  Generate the upload-failure alarm.
+ * @brief  Éú³ÉÉÏ±¨Ê§°ÜÌáÊ¾Òô¡£
+ */
 void buzzerFail() {
   pinMode(ALARM_PIN, OUTPUT);
   for (int i = 0; i < 3; i++) {
@@ -272,10 +410,16 @@ void buzzerFail() {
   }
 }
 
-// Buzzer beep at 500ms interval for given duration
+/**
+ * @brief  Generate a periodic buzzer tone.
+ * @brief  °´¹Ì¶¨ÖÜÆÚÇı¶¯·äÃùÆ÷¡£
+ * @param  durationMs Tone duration in milliseconds.
+ * @param  durationMs ·äÃù³ÖĞøÊ±¼ä£¬µ¥Î»ÎªºÁÃë¡£
+ */
 void buzzerBeep(unsigned long durationMs) {
   pinMode(ALARM_PIN, OUTPUT);
-  unsigned long start = millis();
+    // Start time of the current connection attempt.
+    // ±¾´ÎÁ¬½Ó³¢ÊÔµÄ¿ªÊ¼Ê±¼ä¡£
   while (millis() - start < durationMs) {
     digitalWrite(ALARM_PIN, HIGH);
     delay(500);
@@ -283,20 +427,38 @@ void buzzerBeep(unsigned long durationMs) {
     delay(500);
   }
 }
-// Buzzer beep at 500ms interval for given duration
+
+/**
+ * @brief  Keep the buzzer active for the specified duration.
+ * @brief  ÈÃ·äÃùÆ÷³ÖĞøÃù½ĞÖ¸¶¨Ê±¼ä¡£
+ * @param  durationMs Tone duration in milliseconds.
+ * @param  durationMs ·äÃù³ÖĞøÊ±¼ä£¬µ¥Î»ÎªºÁÃë¡£
+ */
 void buzzerBeepAlway(unsigned long durationMs) {
   pinMode(ALARM_PIN, OUTPUT);
-  unsigned long start = millis();
+    // Start time of the current connection attempt.
+    // ±¾´ÎÁ¬½Ó³¢ÊÔµÄ¿ªÊ¼Ê±¼ä¡£
   digitalWrite(ALARM_PIN, HIGH);
   while (millis() - start < durationMs) {
-    delay(50);
-    //delay(500);
+    delay(1000);
+
   }
   digitalWrite(ALARM_PIN, LOW);
 }
 
-// ================== EEPROM Config ==================
+/**
+ * @brief  Save network and interrupt configuration to EEPROM.
+ * @brief  ½«ÍøÂçºÍÖĞ¶ÏÅäÖÃ±£´æµ½ EEPROM¡£
+ * @param  ssid Wi-Fi name.
+ * @param  ssid Wi-Fi Ãû³Æ¡£
+ * @param  pass Wi-Fi password.
+ * @param  pass Wi-Fi ÃÜÂë¡£
+ * @param  mode GPIO5 interrupt edge.
+ * @param  mode GPIO5 ÖĞ¶Ï±ßÑØ¡£
+ */
 void saveConfigToEEPROM(String ssid, String pass, int mode) {
+  // Open the EEPROM emulation session.
+  // ¿ªÆô EEPROM ·ÂÕæ¶ÁĞ´»á»°¡£
   EEPROM.begin(EEPROM_SIZE);
   EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VAL);
   EEPROM.write(EEPROM_EXTIMODE_ADDR, mode == RISING ? 1 : 0);
@@ -307,11 +469,21 @@ void saveConfigToEEPROM(String ssid, String pass, int mode) {
   for (int i = 0; i < EEPROM_MAX_PASS; i++) {
     EEPROM.write(EEPROM_PASS_ADDR + i, i < pass.length() ? pass[i] : 0);
   }
+  // Commit the modified buffer to flash memory.
+  // ½«ĞŞ¸ÄºóµÄ»º´æÌá½»µ½ Flash¡£
   EEPROM.commit();
   EEPROM.end();
   Serial.println("Config saved to EEPROM");
 }
 
+/**
+ * @brief  Load configuration from EEPROM and validate it.
+ * @brief  ´Ó EEPROM ¶ÁÈ¡²¢Ğ£ÑéÅäÖÃ¡£
+ * @retval true Valid configuration found.
+ * @retval true ÕÒµ½ÓĞĞ§ÅäÖÃ¡£
+ * @retval false No usable configuration found.
+ * @retval false Ã»ÓĞÕÒµ½¿ÉÓÃÅäÖÃ¡£
+ */
 bool loadConfigFromEEPROM(String &ssid, String &pass, int &mode) {
   EEPROM.begin(EEPROM_SIZE);
   if (EEPROM.read(EEPROM_MAGIC_ADDR) != EEPROM_MAGIC_VAL) {
@@ -331,14 +503,18 @@ bool loadConfigFromEEPROM(String &ssid, String &pass, int &mode) {
   return ssid.length() > 0 && pass.length() > 0;
 }
 
-// ================== WiFi Config from Serial ==================
+/**
+ * @brief  Receive and apply configuration from the serial port.
+ * @brief  ´Ó´®¿Ú½ÓÊÕ²¢Ó¦ÓÃÍøÂçÅäÖÃ¡£
+ * @note   Format: SSID+PASSWORD+GPIO5EXTIMOD.
+ * @note   ¸ñÊ½£ºSSID+PASSWORD+GPIO5EXTIMOD¡£
+ */
 void connectWiFiFromSerial() {
-  while (Serial.available()) Serial.read();  // ä¸¢æ‰è¿›å…¥é…ç½‘å‰çš„æ®‹ç•™å­—èŠ‚
-  inputBuffer = "";                          // åŠæˆªæ¡ç ä¸èƒ½ç•™åˆ°é…ç½‘ç»“æŸåè¢«å½“æˆæ•´å¸§ä¸ŠæŠ¥
+  while (Serial.available()) Serial.read();
+  inputBuffer = "";
   Serial.println("\nEnter WiFi config (SSID+PASSWORD+GPIO5EXTIMOD): ");
   Serial.println("GPIO5EXTIMOD: 1=rising edge, 0=falling edge");
 
-  // è§¦å‘ä¿¡å·åšæˆå ç©ºå¾ªç¯ï¼Œä¸è¿ç»­æ‹‰ä½ï¼Œé¿å…æ‰«ç æ¨¡å—è¢«é•¿æŒ‰é”æ­»ï¼ˆç…§æ˜å¸¸äº®ä¸å†å“åº”ï¼‰
   unsigned long waitStart = millis();
   unsigned long phaseStart = millis();
   bool trigLow = true;
@@ -366,15 +542,17 @@ void connectWiFiFromSerial() {
 #endif
   }
 
-  // æ”¶åˆ°ç¬¬ä¸€ä¸ªå­—èŠ‚å°±æ’¤é”€è§¦å‘ï¼Œå¦åˆ™æ‰«ç æ¨¡å—ä¼šæŒç»­é‡è¯»å¹¶çŒæ»¡ä¸²å£
   digitalWrite(SCAN_TRIGGER, HIGH);
 
-  // æŒ‰ç©ºé—²è¶…æ—¶æˆå¸§ï¼šCR / LF / CRLF / æ— ç»ˆæ­¢ç¬¦éƒ½èƒ½æ­£ç¡®æ”¶å°¾ï¼Œä¸”é•¿åº¦æœ‰ä¸Šé™
+  // Complete configuration frame collected from UART.
+  // ´Ó´®¿ÚÊÕ¼¯µ½µÄÍêÕûÅäÖÃÖ¡¡£
   String config = "";
   unsigned long lastByte = millis();
   while (millis() - lastByte < CONFIG_FRAME_IDLE_MS) {
     if (Serial.available()) {
-      char c = Serial.read();
+      // One byte read from the scanner UART stream.
+    // ´ÓÉ¨ÃèÄ£¿é´®¿ÚÁ÷ÖĞ¶ÁÈ¡µÄÒ»¸ö×Ö½Ú¡£
+    char c = Serial.read();
       lastByte = millis();
       if (c == '\r' || c == '\n') {
         if (config.length() > 0) break;
@@ -385,18 +563,24 @@ void connectWiFiFromSerial() {
       delay(1);
     }
   }
-  while (Serial.available()) Serial.read();  // ä¸¢æ‰é‡å¤è¯»å‡ºçš„å¤šä½™å¸§
+  while (Serial.available()) Serial.read();
 
   config.trim();
   Serial.print("Received config: '");
   Serial.print(config);
   Serial.println("'");
 
+  // Position of the first field separator.
+  // µÚÒ»¸ö×Ö¶Î·Ö¸ô·û¡°+¡±µÄÎ»ÖÃ¡£
   int firstPlus = config.indexOf('+');
+  // Position of the second field separator.
+  // µÚ¶ş¸ö×Ö¶Î·Ö¸ô·û¡°+¡±µÄÎ»ÖÃ¡£
   int secondPlus = config.indexOf('+', firstPlus + 1);
   if (firstPlus > 0 && secondPlus > firstPlus + 1) {
     WIFI_SSID = config.substring(0, firstPlus);
     WIFI_PASSWORD = config.substring(firstPlus + 1, secondPlus);
+    // Text representation of the requested interrupt edge mode.
+    // ´®¿ÚÅäÖÃÖĞÖ¸¶¨µÄÖĞ¶Ï±ßÑØÄ£Ê½ÎÄ±¾¡£
     String extiMod = config.substring(secondPlus + 1);
     extiMod.trim();
 
@@ -404,6 +588,8 @@ void connectWiFiFromSerial() {
     Serial.print("Password: "); Serial.println(WIFI_PASSWORD);
     Serial.print("GPIO5EXTIMOD: "); Serial.println(extiMod);
 
+    // Disable the interrupt while the scanner is active.
+    // É¨Ãè¹¤×÷ÆÚ¼äÔİÊ±¹Ø±ÕÖĞ¶Ï£¬±ÜÃâÖØ¸´´¥·¢¡£
     detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
     if (extiMod == "1") {
       extiMode = RISING;
@@ -434,10 +620,19 @@ void connectWiFiFromSerial() {
   digitalWrite(SCAN_TRIGGER, HIGH);
 }
 
-// Serial Receive Handling
+/**
+ * @brief  Receive scanner bytes and submit a completed frame.
+ * @brief  ½ÓÊÕÉ¨ÃèÊı¾İ£¬²¢ÔÚÒ»Ö¡½áÊøºóÌá½»¡£
+ */
 void handleSerial() {
+  // Limit the amount of serial work done in one loop pass.
+  // ÏŞÖÆµ¥´Î loop ´¦ÀíµÄ´®¿Ú¹¤×÷Á¿¡£
+  // Per-loop byte budget preventing serial processing from blocking other tasks.
+  // µ¥´Î loop µÄ×Ö½ÚÔ¤Ëã£¬·ÀÖ¹´®¿Ú´¦Àí×èÈûÆäËûÈÎÎñ¡£
   int budget = 0;
   while (Serial.available() > 0 && budget++ < SERIAL_BUDGET_PER_LOOP) {
+    // One byte read from the scanner UART stream.
+    // ´ÓÉ¨ÃèÄ£¿é´®¿ÚÁ÷ÖĞ¶ÁÈ¡µÄÒ»¸ö×Ö½Ú¡£
     char c = Serial.read();
     if (millis() - lastReceiveTime > TIMEOUT_MS) {
       inputBuffer = "";
@@ -446,7 +641,7 @@ void handleSerial() {
       inputBuffer += c;
     }
     lastReceiveTime = millis();
-    // å·²ç»è¯»åˆ°æ•°æ®ï¼Œç«‹åˆ»æ’¤æ‰è§¦å‘ä¿¡å·ï¼Œå¦åˆ™æ‰«ç æ¨¡å—ä¼šæŒç»­é‡è¯»å¹¶çŒæ»¡ä¸²å£
+
     if (scanActiveSince != 0) {
       digitalWrite(SCAN_TRIGGER, HIGH);
       scanActiveSince = 0;
@@ -458,6 +653,10 @@ void handleSerial() {
     Serial.print("Buffer timeout, sending: '");
     Serial.print(inputBuffer);
     Serial.println("' (length: " + String(inputBuffer.length()) + ")");
+    // Idle timeout marks a complete frame; upload it now.
+    // ¿ÕÏĞ³¬Ê±±íÊ¾Ò»Ö¡Êı¾İ½ÓÊÕÍê³É£¬´Ë´¦¿ªÊ¼ÉÏ±¨¡£
+    // Upload result for the completed scan frame.
+    // µ±Ç°ÍêÕûÉ¨ÂëÖ¡µÄÉÏ±¨½á¹û¡£
     bool success = sendToAPI(inputBuffer);
     if (success) {
       Serial.println("API Request Sent");
@@ -465,18 +664,24 @@ void handleSerial() {
       apiSent = true;
     } else {
       Serial.println("API Request Failed");
-      buzzerFail();  // ä¸ŠæŠ¥æ²¡æˆåŠŸå¿…é¡»è®©ç°åœºå¬è§ï¼Œå¦åˆ™ä¼šå½“æˆæ‰«ä¸Šäº†
+      buzzerFail();
     }
     inputBuffer = "";
     digitalWrite(SCAN_TRIGGER, HIGH);
+    // Re-enable the configured edge interrupt for the next scan.
+    // °´µ±Ç°±ßÑØÄ£Ê½ÖØĞÂÆôÓÃÖĞ¶Ï£¬µÈ´ıÏÂÒ»´ÎÉ¨Ãè¡£
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
-    scanTriggered = false;  // ä¸¢æ‰é‡æŒ‚ä¸­æ–­ç¬é—´äº§ç”Ÿçš„è§¦å‘
+    scanTriggered = false;
     scanCooldownUntil = millis() + SCAN_COOLDOWN_MS;
   }
 }
 
 #ifdef ENABLE_OLED
-// OLED Display Handling
+
+/**
+ * @brief  Refresh the optional OLED status screen.
+ * @brief  Ë¢ĞÂ¿ÉÑ¡ OLED ×´Ì¬½çÃæ¡£
+ */
 void handleOLED() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB08_tr);
@@ -513,11 +718,15 @@ void handleOLED() {
 void handleOLED() {}
 #endif
 
+/**
+ * @brief  Initialize the board and load saved configuration.
+ * @brief  ³õÊ¼»¯¿ª·¢°å²¢¼ÓÔØÒÑ±£´æÅäÖÃ¡£
+ */
 void setup() {
   Serial.begin(9600);
   delay(3000);
   
-  // Send init hex: 44 43 4D 4F 4D 41 4E 55
+
   byte connectedData[] = {0x44, 0x43, 0x4D, 0x4F, 0x4D, 0x41, 0x4E, 0x55};
   Serial.write(connectedData, sizeof(connectedData));
   
@@ -537,8 +746,12 @@ void setup() {
   u8g2.enableUTF8Print();
 #endif
   
-  // Try to load saved config from EEPROM and auto-connect
+
+  // EEPROM-loaded Wi-Fi credentials.
+  // ´Ó EEPROM ¶ÁÈ¡µÄ Wi-Fi Ãû³ÆºÍÃÜÂë¡£
   String savedSSID, savedPass;
+  // EEPROM-loaded GPIO5 interrupt edge mode.
+  // ´Ó EEPROM ¶ÁÈ¡µÄ GPIO5 ÖĞ¶Ï±ßÑØÄ£Ê½¡£
   int savedMode;
   if (loadConfigFromEEPROM(savedSSID, savedPass, savedMode)) {
     Serial.println("Found saved WiFi config, auto-connecting...");
@@ -557,7 +770,7 @@ void setup() {
     }
   }
   
-  // Check button to enter WiFi config mode
+
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50);
     if (digitalRead(BUTTON_PIN) == LOW) {
@@ -567,28 +780,37 @@ void setup() {
   }
 }
 
+/**
+ * @brief  Execute periodic application tasks.
+ * @brief  Ö´ĞĞÖÜÆÚĞÔµÄÓ¦ÓÃÈÎÎñ¡£
+ */
 void loop() {
+  // Process incoming scanner data first.
+  // ÓÅÏÈ´¦ÀíÉ¨ÃèÄ£¿éÊäÈëÊı¾İ¡£
   handleSerial();
+  // Update the optional display.
+  // ¸üĞÂ¿ÉÑ¡µÄ OLED ÏÔÊ¾¡£
   handleOLED();
   
   if (scanTriggered) {
     scanTriggered = false;
-    // å†·å´æœŸå†…çš„è§¦å‘ä¸€å¾‹ä¸¢å¼ƒï¼šæ’¤é”€è§¦å‘ä¿¡å·æ—¶æ‰«ç æ¨¡å—çŠ¶æ€è„šçš„è·³å˜ä¼šç«‹åˆ»è‡ªè§¦å‘
+
     if (millis() >= scanCooldownUntil) {
       Serial.println("in");
       detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
+      // Pull the trigger low to request scanner output.
+      // À­µÍ´¥·¢Ïß£¬ÇëÇóÉ¨ÃèÄ£¿éÊä³öÊı¾İ¡£
       digitalWrite(SCAN_TRIGGER, LOW);
       scanActiveSince = millis();
     }
   }
 
-  // è§¦å‘åä¸€ç›´æ²¡è¯»åˆ°æ•°æ®ï¼šæ¢å¤ GPIO12 å’Œä¸­æ–­ï¼Œé¿å…æ°¸ä¹…å‡æ­»
   if (scanActiveSince != 0 && millis() - scanActiveSince > SCAN_TIMEOUT_MS) {
     scanActiveSince = 0;
     emptyScanStreak++;
     digitalWrite(SCAN_TRIGGER, HIGH);
     if (emptyScanStreak >= EMPTY_SCAN_BACKOFF_AT) {
-      // è¿ç»­ç©ºæ‰«è¯´æ˜ GPIO5 åœ¨è‡ªæ¿€æˆ–ç°åœºæ²¡æœ‰ç ï¼Œæ‹‰é•¿å†·å´è®©æ¨¡å—çœŸæ­£ä¼‘æ¯
+
       scanCooldownUntil = millis() + SCAN_BACKOFF_MS;
       Serial.print("Scan timeout x");
       Serial.print(emptyScanStreak);
@@ -600,10 +822,10 @@ void loop() {
       Serial.println("Scan timeout, nothing read, recovering");
     }
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
-    scanTriggered = false;  // ä¸¢æ‰é‡æŒ‚ä¸­æ–­ç¬é—´äº§ç”Ÿçš„è§¦å‘
+    scanTriggered = false;
   }
   
-  // Check button for re-configuration
+
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50);
     if (digitalRead(BUTTON_PIN) == LOW) {
@@ -612,7 +834,7 @@ void loop() {
     }
   }
   
-  // è·Ÿè¸ª WiFi çœŸå®çŠ¶æ€ï¼šSDK è´Ÿè´£è‡ªåŠ¨é‡è¿ï¼Œè¿™é‡ŒåªåŒæ­¥æ ‡å¿—ã€ç¯å’Œ API åœ°å€
+
   if (millis() - lastWifiCheck > WIFI_CHECK_MS) {
     lastWifiCheck = millis();
     bool up = (WiFi.status() == WL_CONNECTED && WiFi.localIP().isSet());
@@ -622,7 +844,7 @@ void loop() {
       digitalWrite(BLUE_LED, up ? HIGH : LOW);
       if (up) {
         Serial.println("WiFi reconnected");
-        buildAPIURL();  // é‡è¿å IP å¯èƒ½å˜äº†ï¼Œåœ°å€è¦é‡æ–°æ‹¼
+        buildAPIURL();
       } else {
         API_URL = "";
         Serial.println("WiFi lost");

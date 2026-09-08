@@ -35,8 +35,8 @@ String WIFI_PASSWORD = "";
 #define EEPROM_MAX_PASS 64
 
 const int OUTTIME = 1;
-const unsigned long WIFI_ATTEMPT_MS = 10000;  // å•è½®è¿æ¥è¶…æ—¶
-const int WIFI_MAX_ATTEMPTS = 3;              // è¶…æ—¶åé‡æ–° begin çš„è½®æ•°
+const unsigned long WIFI_ATTEMPT_MS = 10000;  // µ¥ÂÖÁ¬½Ó³¬Ê±
+const int WIFI_MAX_ATTEMPTS = 3;              // ³¬Ê±ºóÖØĞÂ begin µÄÂÖÊı
 // API Configuration
 String API_URL = "";  // Dynamically generated
 const char* API_PATH = "/api/externalinterface/addMaterialBoxScanningRecord";
@@ -89,22 +89,22 @@ volatile unsigned long interruptCount = 0;
 unsigned long lastDebugPrint = 0;
 int extiMode = FALLING;  // default interrupt mode
 
-unsigned long scanActiveSince = 0;               // 0 = ä¸åœ¨æ‰«ç çŠ¶æ€
-unsigned long scanCooldownUntil = 0;             // è¯¥æ—¶åˆ»ä¹‹å‰æ”¶åˆ°çš„è§¦å‘å…¨éƒ¨ä¸¢å¼ƒ
-int emptyScanStreak = 0;                         // è¿ç»­å‡ æ¬¡è§¦å‘åæ²¡è¯»åˆ°æ•°æ®
-const unsigned long SCAN_COOLDOWN_MS = 500;      // æ’¤é”€è§¦å‘åçš„é‡è§¦å‘å†·å´
-const unsigned long SCAN_BACKOFF_MS = 10000;     // è¿ç»­ç©ºæ‰«åçš„é€€é¿æ—¶é•¿
-const int EMPTY_SCAN_BACKOFF_AT = 10;             // è¿ç»­ç©ºæ‰«å‡ æ¬¡å¼€å§‹é€€é¿
-const unsigned long SCAN_TIMEOUT_MS = 5000;      // è§¦å‘åå¤šä¹…æ²¡æ”¶åˆ°æ•°æ®å°±å¼ºåˆ¶æ¢å¤
-const unsigned int MAX_FRAME_LEN = 128;          // å•å¸§ä¸Šé™ï¼Œé˜²æ­¢ç¼“å†²åŒºæ— é™å¢é•¿
-const int SERIAL_BUDGET_PER_LOOP = 96;           // æ¯è½® loop æœ€å¤šè¯»å¤šå°‘å­—èŠ‚
-const unsigned long CONFIG_WAIT_MS = 15000;      // é…ç½‘ç­‰å¾…è¾“å…¥çš„æ€»è¶…æ—¶
-const unsigned long CONFIG_FRAME_IDLE_MS = 500;  // é…ç½‘å‘½ä»¤çš„ç©ºé—²æˆå¸§æ—¶é—´
-const unsigned int MAX_CONFIG_LEN = 160;         // é…ç½‘å‘½ä»¤é•¿åº¦ä¸Šé™
-const unsigned long CONFIG_TRIG_LOW_MS = 1500;   // é…ç½‘æœŸé—´è§¦å‘ä¿¡å·æ‹‰ä½æ—¶é•¿
-const unsigned long CONFIG_TRIG_HIGH_MS = 300;   // è§¦å‘ä¿¡å·é—´æ­‡æ—¶é•¿ï¼Œç»™æ¨¡å—æ¢å¤
+unsigned long scanActiveSince = 0;               // 0 = ²»ÔÚÉ¨Âë×´Ì¬
+unsigned long scanCooldownUntil = 0;             // ¸ÃÊ±¿ÌÖ®Ç°ÊÕµ½µÄ´¥·¢È«²¿¶ªÆú
+int emptyScanStreak = 0;                         // Á¬Ğø¼¸´Î´¥·¢ºóÃ»¶Áµ½Êı¾İ
+const unsigned long SCAN_COOLDOWN_MS = 500;      // ³·Ïú´¥·¢ºóµÄÖØ´¥·¢ÀäÈ´
+const unsigned long SCAN_BACKOFF_MS = 10000;     // Á¬Ğø¿ÕÉ¨ºóµÄÍË±ÜÊ±³¤
+const int EMPTY_SCAN_BACKOFF_AT = 3;             // Á¬Ğø¿ÕÉ¨¼¸´Î¿ªÊ¼ÍË±Ü
+const unsigned long SCAN_TIMEOUT_MS = 5000;      // ´¥·¢ºó¶à¾ÃÃ»ÊÕµ½Êı¾İ¾ÍÇ¿ÖÆ»Ö¸´
+const unsigned int MAX_FRAME_LEN = 128;          // µ¥Ö¡ÉÏÏŞ£¬·ÀÖ¹»º³åÇøÎŞÏŞÔö³¤
+const int SERIAL_BUDGET_PER_LOOP = 96;           // Ã¿ÂÖ loop ×î¶à¶Á¶àÉÙ×Ö½Ú
+const unsigned long CONFIG_WAIT_MS = 15000;      // ÅäÍøµÈ´ıÊäÈëµÄ×Ü³¬Ê±
+const unsigned long CONFIG_FRAME_IDLE_MS = 500;  // ÅäÍøÃüÁîµÄ¿ÕÏĞ³ÉÖ¡Ê±¼ä
+const unsigned int MAX_CONFIG_LEN = 160;         // ÅäÍøÃüÁî³¤¶ÈÉÏÏŞ
+const unsigned long CONFIG_TRIG_LOW_MS = 1500;   // ÅäÍøÆÚ¼ä´¥·¢ĞÅºÅÀ­µÍÊ±³¤
+const unsigned long CONFIG_TRIG_HIGH_MS = 300;   // ´¥·¢ĞÅºÅ¼äĞªÊ±³¤£¬¸øÄ£¿é»Ö¸´
 unsigned long lastWifiCheck = 0;
-const unsigned long WIFI_CHECK_MS = 5000;        // ä¸»å¾ªç¯é‡ŒåŒæ­¥ WiFi çœŸå®çŠ¶æ€çš„é—´éš”
+const unsigned long WIFI_CHECK_MS = 5000;        // Ö÷Ñ­»·ÀïÍ¬²½ WiFi ÕæÊµ×´Ì¬µÄ¼ä¸ô
 
 void IRAM_ATTR onScanInterrupt() {
   scanTriggered = true;
@@ -126,21 +126,20 @@ const char* wifiStatusName(int status) {
 // WiFi Initialization
 void initWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);  // æ‰çº¿ç”± SDK è‡ªåŠ¨é‡è¿ï¼Œä¸»å¾ªç¯åªè´Ÿè´£è·Ÿè¸ªçŠ¶æ€
+  WiFi.setAutoReconnect(true);  // µôÏßÓÉ SDK ×Ô¶¯ÖØÁ¬£¬Ö÷Ñ­»·Ö»¸ºÔğ¸ú×Ù×´Ì¬
   for (int attempt = 1; attempt <= WIFI_MAX_ATTEMPTS; attempt++) {
     WiFi.disconnect();
-    delay(100);  // ç´§æ¥ç€ begin ä¼šå¶å‘è¿ä¸ä¸Šï¼Œæ–­å¼€éœ€è¦æ—¶é—´å¤„ç†å®Œ
+    delay(100);  // ½ô½Ó×Å begin »áÅ¼·¢Á¬²»ÉÏ£¬¶Ï¿ªĞèÒªÊ±¼ä´¦ÀíÍê
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_ATTEMPT_MS) {
       delay(500);
     }
-    // å¡åœ¨ CONNECTING æ—¶å†ç­‰ä¹Ÿæ²¡ç”¨ï¼Œé‡æ–° begin æ‰èƒ½é‡ç½®å°„é¢‘çŠ¶æ€æœº
+    // ¿¨ÔÚ CONNECTING Ê±ÔÙµÈÒ²Ã»ÓÃ£¬ÖØĞÂ begin ²ÅÄÜÖØÖÃÉäÆµ×´Ì¬»ú
     if (WiFi.status() == WL_CONNECTED && WiFi.localIP().isSet()) {
       wifiConnected = true;
       digitalWrite(GREEN_LED, LOW);
       digitalWrite(BLUE_LED, HIGH);
-      buzzerBeepAlway(100);//è”ç½‘æˆåŠŸå“500ms
       if (attempt > 1) {
         Serial.print("WiFi connected on attempt ");
         Serial.println(attempt);
@@ -160,8 +159,6 @@ void initWiFi() {
   wifiConnected = false;
   digitalWrite(GREEN_LED, HIGH);
   digitalWrite(BLUE_LED, LOW);
-  buzzerBeepAlway(2000);//è”ç½‘å¤±è´¥å“3s
-
 }
 
 // Clean invalid UTF-8 characters from string
@@ -233,10 +230,10 @@ bool sendToAPI(String data) {
         Serial.print("API Data: ");
         Serial.println(apiData);
         if ((apiData < OUTTIME)&&(apiData>=0)) {
-          Serial.println("invalid data, buzzer 5s...");//æ•°æ®æ— æ•ˆ
-          buzzerBeepAlway(5000);
+          Serial.println("Invalid data, buzzer 10s...");
+          buzzerBeepAlway(3000);
         } else {
-          Serial.println("valid data, buzzer 3s...");//æ•°æ®æœ‰æ•ˆ
+          Serial.println("Valid data, buzzer 3s...");
           buzzerBeep(3000);
         }
       }
@@ -261,7 +258,7 @@ bool sendToAPI(String data) {
   return false;
 }
 
-// ä¸ŠæŠ¥å¤±è´¥æç¤ºï¼šæ€¥ä¿ƒä¸‰çŸ­å£°ï¼Œä¸æ­£å¸¸ï¼ˆé—´æ­‡3å£°ï¼‰å’Œå¼‚å¸¸ï¼ˆé•¿é¸£3ç§’ï¼‰éƒ½èƒ½æ˜æ˜¾åŒºåˆ†
+// ÉÏ±¨Ê§°ÜÌáÊ¾£º¼±´ÙÈı¶ÌÉù£¬ÓëÕı³££¨¼äĞª3Éù£©ºÍÒì³££¨³¤Ãù3Ãë£©¶¼ÄÜÃ÷ÏÔÇø·Ö
 void buzzerFail() {
   pinMode(ALARM_PIN, OUTPUT);
   for (int i = 0; i < 3; i++) {
@@ -289,7 +286,7 @@ void buzzerBeepAlway(unsigned long durationMs) {
   unsigned long start = millis();
   digitalWrite(ALARM_PIN, HIGH);
   while (millis() - start < durationMs) {
-    delay(50);
+    delay(1000);
     //delay(500);
   }
   digitalWrite(ALARM_PIN, LOW);
@@ -333,12 +330,12 @@ bool loadConfigFromEEPROM(String &ssid, String &pass, int &mode) {
 
 // ================== WiFi Config from Serial ==================
 void connectWiFiFromSerial() {
-  while (Serial.available()) Serial.read();  // ä¸¢æ‰è¿›å…¥é…ç½‘å‰çš„æ®‹ç•™å­—èŠ‚
-  inputBuffer = "";                          // åŠæˆªæ¡ç ä¸èƒ½ç•™åˆ°é…ç½‘ç»“æŸåè¢«å½“æˆæ•´å¸§ä¸ŠæŠ¥
+  while (Serial.available()) Serial.read();  // ¶ªµô½øÈëÅäÍøÇ°µÄ²ĞÁô×Ö½Ú
+  inputBuffer = "";                          // °ë½ØÌõÂë²»ÄÜÁôµ½ÅäÍø½áÊøºó±»µ±³ÉÕûÖ¡ÉÏ±¨
   Serial.println("\nEnter WiFi config (SSID+PASSWORD+GPIO5EXTIMOD): ");
   Serial.println("GPIO5EXTIMOD: 1=rising edge, 0=falling edge");
 
-  // è§¦å‘ä¿¡å·åšæˆå ç©ºå¾ªç¯ï¼Œä¸è¿ç»­æ‹‰ä½ï¼Œé¿å…æ‰«ç æ¨¡å—è¢«é•¿æŒ‰é”æ­»ï¼ˆç…§æ˜å¸¸äº®ä¸å†å“åº”ï¼‰
+  // ´¥·¢ĞÅºÅ×ö³ÉÕ¼¿ÕÑ­»·£¬²»Á¬ĞøÀ­µÍ£¬±ÜÃâÉ¨ÂëÄ£¿é±»³¤°´ËøËÀ£¨ÕÕÃ÷³£ÁÁ²»ÔÙÏìÓ¦£©
   unsigned long waitStart = millis();
   unsigned long phaseStart = millis();
   bool trigLow = true;
@@ -366,10 +363,10 @@ void connectWiFiFromSerial() {
 #endif
   }
 
-  // æ”¶åˆ°ç¬¬ä¸€ä¸ªå­—èŠ‚å°±æ’¤é”€è§¦å‘ï¼Œå¦åˆ™æ‰«ç æ¨¡å—ä¼šæŒç»­é‡è¯»å¹¶çŒæ»¡ä¸²å£
+  // ÊÕµ½µÚÒ»¸ö×Ö½Ú¾Í³·Ïú´¥·¢£¬·ñÔòÉ¨ÂëÄ£¿é»á³ÖĞøÖØ¶Á²¢¹àÂú´®¿Ú
   digitalWrite(SCAN_TRIGGER, HIGH);
 
-  // æŒ‰ç©ºé—²è¶…æ—¶æˆå¸§ï¼šCR / LF / CRLF / æ— ç»ˆæ­¢ç¬¦éƒ½èƒ½æ­£ç¡®æ”¶å°¾ï¼Œä¸”é•¿åº¦æœ‰ä¸Šé™
+  // °´¿ÕÏĞ³¬Ê±³ÉÖ¡£ºCR / LF / CRLF / ÎŞÖÕÖ¹·û¶¼ÄÜÕıÈ·ÊÕÎ²£¬ÇÒ³¤¶ÈÓĞÉÏÏŞ
   String config = "";
   unsigned long lastByte = millis();
   while (millis() - lastByte < CONFIG_FRAME_IDLE_MS) {
@@ -385,7 +382,7 @@ void connectWiFiFromSerial() {
       delay(1);
     }
   }
-  while (Serial.available()) Serial.read();  // ä¸¢æ‰é‡å¤è¯»å‡ºçš„å¤šä½™å¸§
+  while (Serial.available()) Serial.read();  // ¶ªµôÖØ¸´¶Á³öµÄ¶àÓàÖ¡
 
   config.trim();
   Serial.print("Received config: '");
@@ -446,7 +443,7 @@ void handleSerial() {
       inputBuffer += c;
     }
     lastReceiveTime = millis();
-    // å·²ç»è¯»åˆ°æ•°æ®ï¼Œç«‹åˆ»æ’¤æ‰è§¦å‘ä¿¡å·ï¼Œå¦åˆ™æ‰«ç æ¨¡å—ä¼šæŒç»­é‡è¯»å¹¶çŒæ»¡ä¸²å£
+    // ÒÑ¾­¶Áµ½Êı¾İ£¬Á¢¿Ì³·µô´¥·¢ĞÅºÅ£¬·ñÔòÉ¨ÂëÄ£¿é»á³ÖĞøÖØ¶Á²¢¹àÂú´®¿Ú
     if (scanActiveSince != 0) {
       digitalWrite(SCAN_TRIGGER, HIGH);
       scanActiveSince = 0;
@@ -465,12 +462,12 @@ void handleSerial() {
       apiSent = true;
     } else {
       Serial.println("API Request Failed");
-      buzzerFail();  // ä¸ŠæŠ¥æ²¡æˆåŠŸå¿…é¡»è®©ç°åœºå¬è§ï¼Œå¦åˆ™ä¼šå½“æˆæ‰«ä¸Šäº†
+      buzzerFail();  // ÉÏ±¨Ã»³É¹¦±ØĞëÈÃÏÖ³¡Ìı¼û£¬·ñÔò»áµ±³ÉÉ¨ÉÏÁË
     }
     inputBuffer = "";
     digitalWrite(SCAN_TRIGGER, HIGH);
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
-    scanTriggered = false;  // ä¸¢æ‰é‡æŒ‚ä¸­æ–­ç¬é—´äº§ç”Ÿçš„è§¦å‘
+    scanTriggered = false;  // ¶ªµôÖØ¹ÒÖĞ¶ÏË²¼ä²úÉúµÄ´¥·¢
     scanCooldownUntil = millis() + SCAN_COOLDOWN_MS;
   }
 }
@@ -573,7 +570,7 @@ void loop() {
   
   if (scanTriggered) {
     scanTriggered = false;
-    // å†·å´æœŸå†…çš„è§¦å‘ä¸€å¾‹ä¸¢å¼ƒï¼šæ’¤é”€è§¦å‘ä¿¡å·æ—¶æ‰«ç æ¨¡å—çŠ¶æ€è„šçš„è·³å˜ä¼šç«‹åˆ»è‡ªè§¦å‘
+    // ÀäÈ´ÆÚÄÚµÄ´¥·¢Ò»ÂÉ¶ªÆú£º³·Ïú´¥·¢ĞÅºÅÊ±É¨ÂëÄ£¿é×´Ì¬½ÅµÄÌø±ä»áÁ¢¿Ì×Ô´¥·¢
     if (millis() >= scanCooldownUntil) {
       Serial.println("in");
       detachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT));
@@ -582,13 +579,13 @@ void loop() {
     }
   }
 
-  // è§¦å‘åä¸€ç›´æ²¡è¯»åˆ°æ•°æ®ï¼šæ¢å¤ GPIO12 å’Œä¸­æ–­ï¼Œé¿å…æ°¸ä¹…å‡æ­»
+  // ´¥·¢ºóÒ»Ö±Ã»¶Áµ½Êı¾İ£º»Ö¸´ GPIO12 ºÍÖĞ¶Ï£¬±ÜÃâÓÀ¾Ã¼ÙËÀ
   if (scanActiveSince != 0 && millis() - scanActiveSince > SCAN_TIMEOUT_MS) {
     scanActiveSince = 0;
     emptyScanStreak++;
     digitalWrite(SCAN_TRIGGER, HIGH);
     if (emptyScanStreak >= EMPTY_SCAN_BACKOFF_AT) {
-      // è¿ç»­ç©ºæ‰«è¯´æ˜ GPIO5 åœ¨è‡ªæ¿€æˆ–ç°åœºæ²¡æœ‰ç ï¼Œæ‹‰é•¿å†·å´è®©æ¨¡å—çœŸæ­£ä¼‘æ¯
+      // Á¬Ğø¿ÕÉ¨ËµÃ÷ GPIO5 ÔÚ×Ô¼¤»òÏÖ³¡Ã»ÓĞÂë£¬À­³¤ÀäÈ´ÈÃÄ£¿éÕæÕıĞİÏ¢
       scanCooldownUntil = millis() + SCAN_BACKOFF_MS;
       Serial.print("Scan timeout x");
       Serial.print(emptyScanStreak);
@@ -600,7 +597,7 @@ void loop() {
       Serial.println("Scan timeout, nothing read, recovering");
     }
     attachInterrupt(digitalPinToInterrupt(SCAN_INTERRUPT), onScanInterrupt, extiMode);
-    scanTriggered = false;  // ä¸¢æ‰é‡æŒ‚ä¸­æ–­ç¬é—´äº§ç”Ÿçš„è§¦å‘
+    scanTriggered = false;  // ¶ªµôÖØ¹ÒÖĞ¶ÏË²¼ä²úÉúµÄ´¥·¢
   }
   
   // Check button for re-configuration
@@ -612,7 +609,7 @@ void loop() {
     }
   }
   
-  // è·Ÿè¸ª WiFi çœŸå®çŠ¶æ€ï¼šSDK è´Ÿè´£è‡ªåŠ¨é‡è¿ï¼Œè¿™é‡ŒåªåŒæ­¥æ ‡å¿—ã€ç¯å’Œ API åœ°å€
+  // ¸ú×Ù WiFi ÕæÊµ×´Ì¬£ºSDK ¸ºÔğ×Ô¶¯ÖØÁ¬£¬ÕâÀïÖ»Í¬²½±êÖ¾¡¢µÆºÍ API µØÖ·
   if (millis() - lastWifiCheck > WIFI_CHECK_MS) {
     lastWifiCheck = millis();
     bool up = (WiFi.status() == WL_CONNECTED && WiFi.localIP().isSet());
@@ -622,7 +619,7 @@ void loop() {
       digitalWrite(BLUE_LED, up ? HIGH : LOW);
       if (up) {
         Serial.println("WiFi reconnected");
-        buildAPIURL();  // é‡è¿å IP å¯èƒ½å˜äº†ï¼Œåœ°å€è¦é‡æ–°æ‹¼
+        buildAPIURL();  // ÖØÁ¬ºó IP ¿ÉÄÜ±äÁË£¬µØÖ·ÒªÖØĞÂÆ´
       } else {
         API_URL = "";
         Serial.println("WiFi lost");
